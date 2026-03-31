@@ -34,11 +34,9 @@ export async function getOrCreateSession(
       db.prepare('UPDATE sessions SET is_expired = 1 WHERE id = ?').run(existing.id);
     } else {
       const currentHash = hashMessages(messages);
-      if (currentHash === existing.last_messages_hash) {
-        db.prepare("UPDATE sessions SET last_used_at = datetime('now') WHERE id = ?").run(existing.id);
-        return { conversationId: existing.conversation_id, reuseHistory: true, session: existing };
-      }
-      db.prepare('UPDATE sessions SET is_expired = 1 WHERE id = ?').run(existing.id);
+      const reuseHistory = currentHash === existing.last_messages_hash;
+      db.prepare("UPDATE sessions SET last_used_at = datetime('now') WHERE id = ?").run(existing.id);
+      return { conversationId: existing.conversation_id, reuseHistory, session: existing };
     }
   }
 

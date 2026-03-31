@@ -5,6 +5,7 @@ import { getAccountByApiKey, getLeastBusyAccount, incrementActive, decrementActi
 import { callMimo, MimoUsage } from '../mimo/client.js';
 import { getOrCreateSession, updateSessionTokens } from '../mimo/session.js';
 import { serializeMessages, extractLastUserMessage, ChatMessage } from '../mimo/serialize.js';
+import { encodeSessionId, decodeSessionIdFromMessages } from '../mimo/session-marker.js';
 import { config } from '../config.js';
 import { db } from '../db.js';
 import { buildToolSystemPrompt, ToolDefinition } from '../tools/prompt.js';
@@ -113,8 +114,11 @@ export function registerAnthropic(app: Hono) {
       let conversationId: string;
       let query: string;
 
-      if (clientSessionId) {
-        const { conversationId: cid, reuseHistory, session } = await getOrCreateSession(account.id, clientSessionId, messages);
+      const bodyMsgsRaw = (body.messages as unknown[]) ?? [];
+      const embeddedSessionId = decodeSessionIdFromMessages(bodyMsgsRaw);
+      const effectiveSessionKey = clientSessionId ?? embeddedSessionId;
+      if (effectiveSessionKey) {
+        const { conversationId: cid, reuseHistory, session } = await getOrCreateSession(account.id, effectiveSessionKey, messages);
         conversationId = cid;
         sessionId = session.id;
         // when tools are present, always send full messages so the tool definitions are included
@@ -255,6 +259,8 @@ export function registerAnthropic(app: Hono) {
               }
               // close the last active block
               const lastIdx = config.thinkMode === 'separate' && pastThink ? 1 : 0;
+              // 在关闭 block 前附加零宽标记，保证客户端能收到
+              await sendEvent('content_block_delta', { type: 'content_block_delta', index: lastIdx, delta: { type: 'text_delta', text: encodeSessionId(conversationId) } });
               await sendEvent('content_block_stop', { type: 'content_block_stop', index: lastIdx });
               let stopReason = 'end_turn';
               if (toolCallBuf && hasToolCallMarker(toolCallBuf)) {
@@ -306,6 +312,8 @@ export function registerAnthropic(app: Hono) {
               pendingText = '';
             }
             const lastIdx = config.thinkMode === 'separate' && pastThink ? 1 : 0;
+            // 在关闭 block 前附加零宽标记
+            await sendEvent('content_block_delta', { type: 'content_block_delta', index: lastIdx, delta: { type: 'text_delta', text: encodeSessionId(conversationId) } });
             await sendEvent('content_block_stop', { type: 'content_block_stop', index: lastIdx });
             let stopReason = 'end_turn';
             if (toolCallBuf && hasToolCallMarker(toolCallBuf)) {
@@ -354,12 +362,13 @@ export function registerAnthropic(app: Hono) {
       }
 
       const content: unknown[] = [];
+      const marker = encodeSessionId(conversationId);
       if (config.thinkMode === 'separate') {
         const { thinkContent, mainContent } = processThinkContent(fullText);
         if (thinkContent) content.push({ type: 'thinking', thinking: thinkContent });
-        content.push({ type: 'text', text: mainContent });
+        content.push({ type: 'text', text: mainContent + marker });
       } else {
-        content.push({ type: 'text', text: fullText });
+        content.push({ type: 'text', text: fullText + marker });
       }
 
       if (sessionId && lastUsage) {

@@ -5,6 +5,7 @@ import { getAccountByApiKey, getLeastBusyAccount, incrementActive, decrementActi
 import { callMimo, MimoUsage } from '../mimo/client.js';
 import { getOrCreateSession, updateSessionTokens } from '../mimo/session.js';
 import { serializeMessages, extractLastUserMessage, ChatMessage } from '../mimo/serialize.js';
+import { encodeSessionId, decodeSessionIdFromMessages } from '../mimo/session-marker.js';
 import { config } from '../config.js';
 import { db } from '../db.js';
 import { buildToolSystemPrompt, ToolDefinition } from '../tools/prompt.js';
@@ -110,11 +111,13 @@ export function registerOpenAI(app: Hono) {
       let conversationId: string;
       let query: string;
 
-      if (clientSessionId) {
-        const { conversationId: cid, reuseHistory, session } = await getOrCreateSession(account.id, clientSessionId, messages);
+      const embeddedSessionId = decodeSessionIdFromMessages(rawMessages);
+      const effectiveSessionKey = clientSessionId ?? embeddedSessionId;
+      if (effectiveSessionKey) {
+        const { conversationId: cid, reuseHistory, session } = await getOrCreateSession(account.id, effectiveSessionKey, messages);
         conversationId = cid;
         sessionId = session.id;
-        query = reuseHistory ? extractLastUserMessage(messages) : serializeMessages(messages);
+        query = (reuseHistory && !tools) ? extractLastUserMessage(messages) : serializeMessages(messages);
       } else {
         conversationId = uuidv4().replace(/-/g, '');
         query = serializeMessages(messages);
@@ -219,6 +222,8 @@ export function registerOpenAI(app: Hono) {
                 completion_tokens_details: { reasoning_tokens: lastUsage.reasoningTokens },
               } : undefined;
               let finishReason = 'stop';
+              // 先发零宽标记到 content，tool_calls 时客户端也会保留此 content
+              await sendDelta({ content: encodeSessionId(conversationId) });
               if (toolCallBuf && hasToolCallMarker(toolCallBuf)) {
                 const calls = parseToolCalls(toolCallBuf);
                 if (calls.length > 0) {
@@ -266,7 +271,7 @@ export function registerOpenAI(app: Hono) {
         if (calls.length > 0) {
           return c.json({
             id: responseId, object: 'chat.completion', created, model: mimoModel,
-            choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: toOpenAIToolCalls(calls) }, finish_reason: 'tool_calls' }],
+            choices: [{ index: 0, message: { role: 'assistant', content: encodeSessionId(conversationId), tool_calls: toOpenAIToolCalls(calls) }, finish_reason: 'tool_calls' }],
             usage: usageObj,
           });
         }
@@ -274,7 +279,7 @@ export function registerOpenAI(app: Hono) {
 
       return c.json({
         id: responseId, object: 'chat.completion', created, model: mimoModel,
-        choices: [{ index: 0, message: { role: 'assistant', content: fullText }, finish_reason: 'stop' }],
+        choices: [{ index: 0, message: { role: 'assistant', content: fullText + encodeSessionId(conversationId) }, finish_reason: 'stop' }],
         usage: usageObj,
       });
     } catch (err: unknown) {
