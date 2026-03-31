@@ -6,9 +6,10 @@ export interface ParsedToolCall {
 
 function parseXmlParam(xml: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
-  const paramRe = /<parameter name="([^"]+)">([\s\S]*?)<\/parameter>/g;
+  // support both <parameter name="key"> and <arg name="key"> formats
+  const re = /<(?:parameter|arg) name="([^"]+)">((?:.|\n|\r)*?)<\/(?:parameter|arg)>/g;
   let m: RegExpExecArray | null;
-  while ((m = paramRe.exec(xml)) !== null) {
+  while ((m = re.exec(xml)) !== null) {
     const key = m[1]; const val = m[2].trim();
     try { result[key] = JSON.parse(val); } catch { result[key] = val; }
   }
@@ -28,10 +29,8 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
   const blockRe = /<tool_call>([\s\S]*?)<\/tool_call>/g;
   let block: RegExpExecArray | null;
   while ((block = blockRe.exec(text)) !== null) {
-    // strip optional <tool_result> prefix MiMo uses inside tool_call
     let inner = block[1].trim();
     if (inner.startsWith("<tool_result>")) inner = inner.slice("<tool_result>".length).trim();
-    // strip trailing </tool_result> if present
     if (inner.endsWith("</tool_result>")) inner = inner.slice(0, -"</tool_result>".length).trim();
     if (inner.startsWith("{")) {
       try {
@@ -41,58 +40,21 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
     } else if (inner.includes("<name")) {
       const name = extractName(inner);
       if (!name) continue;
-      const args: Record<string, unknown> = {};
-      const paramRe2 = /<param(?:\s+name="([^"]+)")?(?:\s+key="([^"]+)")?[^>]*>([\s\S]*?)<\/param>/g;
-      let pm: RegExpExecArray | null;
-      while ((pm = paramRe2.exec(inner)) !== null) {
-        const key = (pm[1] ?? pm[2] ?? "").trim();
-        const val = pm[3].trim();
-        if (key) { try { args[key] = JSON.parse(val); } catch { args[key] = val; } }
-      }
+      const args = parseXmlParam(inner);
       calls.push({ id: `call_${Math.random().toString(36).slice(2,10)}`, name, arguments: args });
-    } else if (inner.includes('<tool_name>')) {
-      // <tool_name>NAME</tool_name><arguments><arg_key>K</arg_key><arg_value>V</arg_value>...</arguments>
-      const nameM = inner.match(/<tool_name>([^<]+)<\/tool_name>/);
-      if (!nameM) continue;
-      const name = nameM[1].trim();
+    } else {
+      const tagMatch = inner.match(/^<([a-zA-Z_][a-zA-Z0-9_]*)>/);
+      if (!tagMatch) continue;
+      const name = tagMatch[1].trim();
       const args: Record<string, unknown> = {};
-      const argRe = /<arg_key>([^<]+)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g;
+      const paramRe4 = /<([a-zA-Z_][a-zA-Z0-9_]*?)>((?:.|\n|\r)*?)<\/\1>/g;
       let pm: RegExpExecArray | null;
-      while ((pm = argRe.exec(inner)) !== null) {
+      while ((pm = paramRe4.exec(inner)) !== null) {
+        if (pm[1] === name) continue;
         const key = pm[1].trim(); const val = pm[2].trim();
         try { args[key] = JSON.parse(val); } catch { args[key] = val; }
       }
       calls.push({ id: `call_${Math.random().toString(36).slice(2,10)}`, name, arguments: args });
-    } else {
-      // try <function=NAME> format first
-      let name: string | null = null;
-      const fnMatch = inner.match(/<function=([^>\n]+)>/);
-      if (fnMatch) {
-        name = fnMatch[1].trim();
-        const args: Record<string, unknown> = {};
-        // parameter=KEY>VALUE</parameter (closing tag may be </parameter> or missing)
-        const paramRe3 = /<parameter=([^>\n]+)>([\s\S]*?)(?:<\/parameter>|\n<\/function>|$)/g;
-        let pm: RegExpExecArray | null;
-        while ((pm = paramRe3.exec(inner)) !== null) {
-          const key = pm[1].trim(); const val = pm[2].trim();
-          if (key) { try { args[key] = JSON.parse(val); } catch { args[key] = val; } }
-        }
-        calls.push({ id: `call_${Math.random().toString(36).slice(2,10)}`, name, arguments: args });
-      } else {
-        // try <TOOLNAME>\n<PARAM>VALUE</PARAM> format e.g. <read><file_path>...
-        const tagMatch = inner.match(/^<([a-zA-Z_][a-zA-Z0-9_]*)>/);
-        if (!tagMatch) continue;
-        name = tagMatch[1].trim();
-        const args: Record<string, unknown> = {};
-        const paramRe4 = /<([a-zA-Z_][a-zA-Z0-9_]*)>([\s\S]*?)<\/\1>/g;
-        let pm: RegExpExecArray | null;
-        while ((pm = paramRe4.exec(inner)) !== null) {
-          if (pm[1] === name) continue; // skip outer tag
-          const key = pm[1].trim(); const val = pm[2].trim();
-          try { args[key] = JSON.parse(val); } catch { args[key] = val; }
-        }
-        calls.push({ id: `call_${Math.random().toString(36).slice(2,10)}`, name, arguments: args });
-      }
     }
   }
   return calls;
@@ -118,5 +80,5 @@ export function parseToolCalls(text: string): ParsedToolCall[] {
 }
 
 export function hasToolCallMarker(text: string): boolean {
-  return text.includes('<function_calls>') || text.includes('<tool_call>');
+  return text.includes("<tool_call>") || text.includes("<function_calls>");
 }
