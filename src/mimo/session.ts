@@ -52,22 +52,43 @@ export async function getOrCreateSession(
           'UPDATE sessions SET is_expired = 1 WHERE account_id = ? AND client_session_id = ? AND is_expired = 0'
         ).run(accountId, clientSessionId);
         
-        // 2. 创建新会话
+        // 2. 创建新会话，使用 INSERT OR IGNORE 防止并发冲突
         const id = uuidv4();
         const conversationId = uuidv4().replace(/-/g, '');
         const historyHash = hashMessages(messages);
-        db.prepare(
-          `INSERT INTO sessions
+        
+        const result = db.prepare(
+          `INSERT OR IGNORE INTO sessions
            (id, account_id, client_session_id, conversation_id, last_messages_hash, last_msg_count, created_at, last_used_at)
            VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
         ).run(id, accountId, clientSessionId, conversationId, historyHash, messages.length);
         
-        return { id, conversationId, historyHash };
+        if (result.changes > 0) {
+          return { id, conversationId, historyHash, isNew: true };
+        } else {
+          // 并发冲突，重新查询
+          console.log('[SESSION] ⚠️ Concurrent reset detected, re-querying...');
+          const existingSession = db.prepare(
+            'SELECT * FROM sessions WHERE account_id = ? AND client_session_id = ? AND is_expired = 0'
+          ).get(accountId, clientSessionId) as Session | undefined;
+          
+          if (existingSession) {
+            return { id: existingSession.id, conversationId: existingSession.conversation_id, historyHash: existingSession.last_messages_hash, isNew: false };
+          } else {
+            throw new Error('Session reset race condition: record disappeared');
+          }
+        }
       });
       
       const result = transaction();
       const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(result.id) as Session;
-      console.log('[SESSION] ✓ New session created after reset:', result.id.slice(0, 8) + '...');
+      
+      if (result.isNew) {
+        console.log('[SESSION] ✓ New session created after reset:', result.id.slice(0, 8) + '...');
+      } else {
+        console.log('[SESSION] ✓ Session reset by concurrent request, reusing:', result.id.slice(0, 8) + '...');
+      }
+      
       return { conversationId: result.conversationId, reuseHistory: false, session };
     } else {
       const currentHash = hashMessages(messages);
@@ -83,7 +104,7 @@ export async function getOrCreateSession(
 
   console.log('[SESSION] No existing session, creating new...');
   // 没有现有会话，创建新的
-  // 使用事务和 INSERT OR REPLACE 防止并发冲突
+  // 使用事务 + INSERT OR IGNORE 防止并发冲突
   const transaction = db.transaction(() => {
     // 先过期所有可能存在的旧会话（防止并发创建）
     db.prepare(
@@ -93,18 +114,43 @@ export async function getOrCreateSession(
     const id = uuidv4();
     const conversationId = uuidv4().replace(/-/g, '');
     const historyHash = hashMessages(messages);
-    db.prepare(
-      `INSERT INTO sessions
+    
+    // 使用 INSERT OR IGNORE 防止并发插入冲突
+    const result = db.prepare(
+      `INSERT OR IGNORE INTO sessions
        (id, account_id, client_session_id, conversation_id, last_messages_hash, last_msg_count, created_at, last_used_at)
        VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
     ).run(id, accountId, clientSessionId, conversationId, historyHash, messages.length);
     
-    return { id, conversationId };
+    // 如果插入成功（changes > 0），返回新创建的 ID
+    // 如果插入失败（并发冲突），重新查询已存在的记录
+    if (result.changes > 0) {
+      return { id, conversationId, isNew: true };
+    } else {
+      // 并发冲突，另一个请求已经创建了记录，重新查询
+      console.log('[SESSION] ⚠️ Concurrent insert detected, re-querying...');
+      const existingSession = db.prepare(
+        'SELECT * FROM sessions WHERE account_id = ? AND client_session_id = ? AND is_expired = 0'
+      ).get(accountId, clientSessionId) as Session | undefined;
+      
+      if (existingSession) {
+        return { id: existingSession.id, conversationId: existingSession.conversation_id, isNew: false };
+      } else {
+        // 极端情况：记录被立即过期了，抛出错误
+        throw new Error('Session creation race condition: record disappeared');
+      }
+    }
   });
   
   const result = transaction();
   const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(result.id) as Session;
-  console.log('[SESSION] ✓ New session created:', result.id.slice(0, 8) + '...');
+  
+  if (result.isNew) {
+    console.log('[SESSION] ✓ New session created:', result.id.slice(0, 8) + '...');
+  } else {
+    console.log('[SESSION] ✓ Session created by concurrent request, reusing:', result.id.slice(0, 8) + '...');
+  }
+  
   return { conversationId: result.conversationId, reuseHistory: false, session };
 }
 
