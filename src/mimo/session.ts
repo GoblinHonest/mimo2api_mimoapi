@@ -45,19 +45,19 @@ export async function getOrCreateSession(
     if (existing.cumulative_prompt_tokens > config.contextResetThreshold) {
       console.log('[SESSION] Token limit exceeded, resetting session...');
       // Token 超限，需要重置会话
-      // 直接过期当前会话并创建新的（不使用 INSERT OR IGNORE，避免死循环）
+      // 删除旧会话（而不是过期），避免 UNIQUE 约束冲突
       const transaction = db.transaction(() => {
-        // 1. 过期当前会话
+        // 1. 删除当前会话（UNIQUE 约束不包含 is_expired，必须删除）
         db.prepare(
-          'UPDATE sessions SET is_expired = 1 WHERE id = ?'
+          'DELETE FROM sessions WHERE id = ?'
         ).run(existing.id);
         
-        // 2. 创建新会话（使用新的 client_session_id 避免冲突）
+        // 2. 创建新会话
         const id = uuidv4();
         const conversationId = uuidv4().replace(/-/g, '');
         const historyHash = hashMessages(messages);
         
-        // 保持相同的 client_session_id，但因为旧记录已过期，不会冲突
+        // 保持相同的 client_session_id，客户端无感知
         db.prepare(
           `INSERT INTO sessions
            (id, account_id, client_session_id, conversation_id, last_messages_hash, last_msg_count, created_at, last_used_at)
