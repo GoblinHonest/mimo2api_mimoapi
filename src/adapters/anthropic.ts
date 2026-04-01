@@ -174,23 +174,61 @@ export function registerAnthropic(app: Hono) {
         c.header('Cache-Control', 'no-cache');
         c.header('X-Accel-Buffering', 'no');
         return stream(c, async (s) => {
+          let pingTimer: NodeJS.Timeout | null = null;
+          let isAborted = false;
+          
+          // 监听客户端断开
+          const req = c.req.raw as any;
+          if (req.on) {
+            req.on('close', () => {
+              isAborted = true;
+              if (pingTimer) clearInterval(pingTimer);
+              console.log('[STREAM] Client disconnected');
+            });
+          }
+          
           const sendEvent = async (event: string, data: unknown) => {
-            await s.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+            if (isAborted) return;  // 客户端已断开，不再发送
+            try {
+              await s.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+            } catch (err) {
+              console.error('[STREAM] Write error:', err);
+              isAborted = true;
+              throw err;
+            }
           };
-          await sendEvent('message_start', {
-            type: 'message_start',
-            message: { id: msgId, type: 'message', role: 'assistant', content: [], model: 'mimo-v2-pro', stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } },
-          });
-          let thinkBuf = '';    // only used for passthrough accumulation
-          let pastThink = false;
-          let thinkingStarted = false;
-          let firstBlockSent = false;
-          let toolCallBuf: string | null = null;
-          let pendingText = '';
-          let earlyCut = false;
-          const pingTimer = setInterval(async () => { await s.write(': ping\n\n'); }, 5000);
-          for await (const chunk of gen) {
-            if (chunk.type === 'text') {
+          
+          try {
+            await sendEvent('message_start', {
+              type: 'message_start',
+              message: { id: msgId, type: 'message', role: 'assistant', content: [], model: 'mimo-v2-pro', stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } },
+            });
+            let thinkBuf = '';    // only used for passthrough accumulation
+            let pastThink = false;
+            let thinkingStarted = false;
+            let firstBlockSent = false;
+            let toolCallBuf: string | null = null;
+            let pendingText = '';
+            let earlyCut = false;
+            pingTimer = setInterval(async () => { 
+              if (!isAborted) {
+                try {
+                  await s.write(': ping\n\n');
+                } catch (err) {
+                  console.error('[STREAM] Ping error:', err);
+                  isAborted = true;
+                  if (pingTimer) clearInterval(pingTimer);
+                }
+              }
+            }, 5000);
+            
+            for await (const chunk of gen) {
+              if (isAborted) {
+                console.log('[STREAM] Aborted, stopping generation');
+                break;
+              }
+              
+              if (chunk.type === 'text') {
               let text = (chunk.content ?? '').replace(/\u0000/g, '');
               if (text) console.log('[DBG] chunk:', JSON.stringify(text.slice(0, 80)), 'pastThink:', pastThink, 'tcBuf:', toolCallBuf !== null);
               if (!pastThink && !thinkingStarted && text && !text.includes('<think>')) {
@@ -395,14 +433,36 @@ export function registerAnthropic(app: Hono) {
             });
             await sendEvent('message_stop', { type: 'message_stop' });
           } else {
-            clearInterval(pingTimer);
+            if (pingTimer) clearInterval(pingTimer);
           }
+          
+          } catch (err) {
+            console.error('[STREAM] Error during streaming:', err);
+            // 尝试发送错误事件（如果连接还在）
+            if (!isAborted) {
+              try {
+                await sendEvent('error', {
+                  type: 'error',
+                  error: { type: 'api_error', message: String(err) }
+                });
+              } catch (e) {
+                console.error('[STREAM] Failed to send error event:', e);
+              }
+            }
+            logRequest({ account_id: account.id, session_id: sessionId, usage: lastUsage, status: 'error', error: String(err), duration_ms: Date.now() - startTime });
+          } finally {
+            // 确保清理定时器
+            if (pingTimer) clearInterval(pingTimer);
+          }
+          
           if (sessionId && lastUsage) {
             const { createHash } = await import('crypto');
             const hash = createHash('sha256').update(JSON.stringify(messages)).digest('hex');
             updateSessionTokens(sessionId, lastUsage.promptTokens, hash, messages.length);
           }
-          logRequest({ account_id: account.id, session_id: sessionId, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
+          if (!isAborted) {
+            logRequest({ account_id: account.id, session_id: sessionId, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
+          }
         });
       }
 

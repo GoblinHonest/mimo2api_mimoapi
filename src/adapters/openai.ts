@@ -155,16 +155,42 @@ export function registerOpenAI(app: Hono) {
         c.header('Cache-Control', 'no-cache');
         c.header('X-Accel-Buffering', 'no');
         return stream(c, async (s) => {
+          let isAborted = false;
+          
+          // 监听客户端断开
+          const req = c.req.raw as any;
+          if (req.on) {
+            req.on('close', () => {
+              isAborted = true;
+              console.log('[STREAM] Client disconnected');
+            });
+          }
+          
           const sendDelta = async (delta: object) => {
-            await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
+            if (isAborted) return;  // 客户端已断开，不再发送
+            try {
+              await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
+            } catch (err) {
+              console.error('[STREAM] Write error:', err);
+              isAborted = true;
+              throw err;
+            }
           };
-          let pastThink = false;
-          let thinkingStarted = false;
-          let thinkBuf = '';
-          let toolCallBuf: string | null = null;
-          let pendingText = '';
-          for await (const chunk of gen) {
-            if (chunk.type === 'text') {
+          
+          try {
+            let pastThink = false;
+            let thinkingStarted = false;
+            let thinkBuf = '';
+            let toolCallBuf: string | null = null;
+            let pendingText = '';
+            
+            for await (const chunk of gen) {
+              if (isAborted) {
+                console.log('[STREAM] Aborted, stopping generation');
+                break;
+              }
+              
+              if (chunk.type === 'text') {
               let text = (chunk.content ?? '').replace(/\u0000/g, '');
               if (!pastThink && !thinkingStarted && text && !text.includes('<think>')) pastThink = true;
               if (!pastThink) {
@@ -271,12 +297,29 @@ export function registerOpenAI(app: Hono) {
               await s.write('data: [DONE]\n\n');
             }
           }
-          if (sessionId && lastUsage) {
+          
+          } catch (err) {
+            console.error('[STREAM] Error during streaming:', err);
+            // 尝试发送错误（如果连接还在）
+            if (!isAborted) {
+              try {
+                await s.write(`data: ${JSON.stringify({ error: { message: String(err), type: 'api_error' } })}\n\n`);
+                await s.write('data: [DONE]\n\n');
+              } catch (e) {
+                console.error('[STREAM] Failed to send error:', e);
+              }
+            }
+            logRequest({ account_id: account.id, session_id: sessionId, model: mimoModel, usage: lastUsage, status: 'error', error: String(err), duration_ms: Date.now() - startTime });
+          }
+          
+          if (sessionId && lastUsage && !isAborted) {
             const { createHash } = await import('crypto');
             const hash = createHash('sha256').update(JSON.stringify(messages)).digest('hex');
             updateSessionTokens(sessionId, lastUsage.promptTokens, hash, messages.length);
           }
-          logRequest({ account_id: account.id, session_id: sessionId, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
+          if (!isAborted) {
+            logRequest({ account_id: account.id, session_id: sessionId, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
+          }
         });
       }
 
