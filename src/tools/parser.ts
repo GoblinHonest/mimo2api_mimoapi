@@ -6,10 +6,17 @@ export interface ParsedToolCall {
 
 function parseXmlParam(xml: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
-  // support both <parameter name="key"> and <arg name="key"> formats
-  const re = /<(?:parameter|arg) name="([^"]+)">((?:.|\n|\r)*?)<\/(?:parameter|arg)>/g;
+  // 1. match <parameter name="key"> or <arg name="key">
+  const re1 = /<(?:parameter|arg)\s+name="([^"]+)">((?:.|\n|\r)*?)<\/(?:parameter|arg)>/g;
+  // 2. match <parameter=key> or <arg=key>
+  const re2 = /<(?:parameter|arg)=([^>\s]+)>((?:.|\n|\r)*?)<\/(?:parameter|arg)>/g;
+
   let m: RegExpExecArray | null;
-  while ((m = re.exec(xml)) !== null) {
+  while ((m = re1.exec(xml)) !== null) {
+    const key = m[1]; const val = m[2].trim();
+    try { result[key] = JSON.parse(val); } catch { result[key] = val; }
+  }
+  while ((m = re2.exec(xml)) !== null) {
     const key = m[1]; const val = m[2].trim();
     try { result[key] = JSON.parse(val); } catch { result[key] = val; }
   }
@@ -17,9 +24,9 @@ function parseXmlParam(xml: string): Record<string, unknown> {
 }
 
 function extractName(inner: string): string | null {
-  let m = inner.match(/<name>([^<\n]+?)<\/name>/);
+  let m = inner.match(/<(?:name|function)>([^<\n]+?)<\/(?:name|function)>/);
   if (m) return m[1].trim();
-  m = inner.match(/<name=([^<>\n\/]+)/);
+  m = inner.match(/<(?:name|function)=([^<>\n\/]+)/);
   if (m) return m[1].trim();
   return null;
 }
@@ -36,8 +43,15 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
       try {
         const parsed = JSON.parse(inner);
         if (parsed.name) calls.push({ id: `call_${Math.random().toString(36).slice(2,10)}`, name: parsed.name, arguments: parsed.arguments ?? parsed.parameters ?? parsed.input ?? {} });
-      } catch { /* skip */ }
-    } else if (inner.includes("<name")) {
+      } catch {
+        // Try to handle literal newlines and unescaped quotes in JSON string
+        try {
+          const repaired = inner.replace(/("[^"]*")|(\n|\r)/g, (match, group1) => group1 || (match === '\n' ? '\\n' : '\\r'));
+          const parsed = JSON.parse(repaired);
+          if (parsed.name) calls.push({ id: `call_${Math.random().toString(36).slice(2,10)}`, name: parsed.name, arguments: parsed.arguments ?? parsed.parameters ?? parsed.input ?? {} });
+        } catch { /* skip fallback to tag parsing if any */ }
+      }
+    } else if (inner.includes("<name") || inner.includes("<function")) {
       const name = extractName(inner);
       if (!name) continue;
       const args = parseXmlParam(inner);
