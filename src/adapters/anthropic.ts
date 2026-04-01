@@ -112,17 +112,46 @@ function processThinkContent(text: string): { thinkContent: string; mainContent:
 
 export function registerAnthropic(app: Hono) {
   app.post('/v1/messages', async (c) => {
+    console.log('\n[REQ] ========== New Anthropic Request ==========');
+    console.log('[REQ] Time:', new Date().toISOString());
+    console.log('[REQ] Method:', c.req.method, 'Path:', c.req.path);
+    
     const authHeader = c.req.header('x-api-key') ?? c.req.header('Authorization')?.replace(/^Bearer\s+/i, '') ?? '';
     const clientSessionId = c.req.header('X-Session-ID');
 
+    console.log('[REQ] Headers:', {
+      hasAuth: !!authHeader,
+      apiKeyPrefix: authHeader ? authHeader.slice(0, 8) + '...' : 'none',
+      sessionId: clientSessionId || 'none',
+      contentType: c.req.header('Content-Type')
+    });
+
     const account = authHeader ? getAccountByApiKey(authHeader) : getLeastBusyAccount();
-    if (!account) return c.json({ type: 'error', error: { type: 'authentication_error', message: 'Unauthorized' } }, 401);
+    if (!account) {
+      console.log('[REQ] ❌ No account available');
+      return c.json({ type: 'error', error: { type: 'authentication_error', message: 'Unauthorized' } }, 401);
+    }
+
+    console.log('[REQ] ✓ Account found:', {
+      id: account.id.slice(0, 8) + '...',
+      alias: account.alias || 'no-alias',
+      activeRequests: account.active_requests,
+      maxConcurrent: config.maxConcurrentPerAccount
+    });
 
     if (account.active_requests >= config.maxConcurrentPerAccount) {
+      console.log('[REQ] ❌ Rate limit exceeded');
       return c.json({ type: 'error', error: { type: 'rate_limit_error', message: 'Too many requests' } }, 429);
     }
 
     const body = await c.req.json();
+    console.log('[REQ] Body parsed:', {
+      model: body.model || 'default',
+      stream: body.stream ?? false,
+      messages: body.messages?.length || 0,
+      tools: body.tools?.length || 0,
+      thinking: body.thinking?.type === 'enabled'
+    });
     console.log('[ANT] tools:', JSON.stringify(body.tools?.map((t: Record<string,unknown>) => t.name ?? t.function) ?? null));
     const medias = await extractImagesAnthropic(account, body);
     const mimoModel = resolveModel(body.model ?? '');
@@ -142,6 +171,7 @@ export function registerAnthropic(app: Hono) {
     const startTime = Date.now();
     const msgId = `msg_${uuidv4().replace(/-/g, '')}`;
 
+    console.log('[REQ] 🚀 Starting request processing...');
     incrementActive(account.id);
     let sessionId: string | null = null;
     let lastUsage: MimoUsage | null = null;
@@ -154,28 +184,49 @@ export function registerAnthropic(app: Hono) {
       const embeddedSessionId = decodeSessionIdFromMessages(bodyMsgsRaw);
       const effectiveSessionKey = clientSessionId ?? embeddedSessionId;
       let effectiveClientSessionId: string;
+      
+      console.log('[SESSION] Session key:', effectiveSessionKey ? effectiveSessionKey.slice(0, 16) + '...' : 'none (new session)');
+      
       if (effectiveSessionKey) {
+        console.log('[SESSION] Looking up existing session...');
         const { conversationId: cid, reuseHistory, session } = await getOrCreateSession(account.id, effectiveSessionKey, messages);
         conversationId = cid;
         sessionId = session.id;
         effectiveClientSessionId = session.client_session_id;
         // when tools are present, always send full messages so the tool definitions are included
         query = (reuseHistory && !tools) ? extractLastUserMessage(messages) : serializeMessages(messages);
+        console.log('[SESSION] ✓ Session found:', {
+          sessionId: sessionId.slice(0, 8) + '...',
+          conversationId: conversationId.slice(0, 8) + '...',
+          reuseHistory,
+          tokens: session.cumulative_prompt_tokens
+        });
       } else {
+        console.log('[SESSION] Creating new session...');
         conversationId = uuidv4().replace(/-/g, '');
         effectiveClientSessionId = conversationId;
         query = serializeMessages(messages);
+        console.log('[SESSION] ✓ New conversation:', conversationId.slice(0, 8) + '...');
       }
 
+      console.log('[MIMO] Calling MiMo API...', {
+        model: mimoModel,
+        thinking: enableThinking,
+        queryLength: query.length,
+        hasMedia: medias.length > 0
+      });
+      
       const gen = callMimo(account, conversationId, query, enableThinking, mimoModel, medias);
 
       if (isStream) {
+        console.log('[STREAM] Starting streaming response...');
         c.header('Content-Type', 'text/event-stream');
         c.header('Cache-Control', 'no-cache');
         c.header('X-Accel-Buffering', 'no');
         return stream(c, async (s) => {
           let pingTimer: NodeJS.Timeout | null = null;
           let isAborted = false;
+          let eventCount = 0;
           
           // 监听客户端断开
           const req = c.req.raw as any;
@@ -183,7 +234,7 @@ export function registerAnthropic(app: Hono) {
             req.on('close', () => {
               isAborted = true;
               if (pingTimer) clearInterval(pingTimer);
-              console.log('[STREAM] Client disconnected');
+              console.log('[STREAM] ⚠️ Client disconnected after', eventCount, 'events');
             });
           }
           
@@ -191,14 +242,16 @@ export function registerAnthropic(app: Hono) {
             if (isAborted) return;  // 客户端已断开，不再发送
             try {
               await s.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+              eventCount++;
             } catch (err) {
-              console.error('[STREAM] Write error:', err);
+              console.error('[STREAM] ❌ Write error:', err);
               isAborted = true;
               throw err;
             }
           };
           
           try {
+            console.log('[STREAM] Waiting for MiMo response...');
             await sendEvent('message_start', {
               type: 'message_start',
               message: { id: msgId, type: 'message', role: 'assistant', content: [], model: 'mimo-v2-pro', stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } },
@@ -375,6 +428,12 @@ export function registerAnthropic(app: Hono) {
                 usage: { output_tokens: lastUsage?.completionTokens ?? 0 },
               });
               await sendEvent('message_stop', { type: 'message_stop' });
+              console.log('[STREAM] ✓ Completed:', {
+                events: eventCount,
+                stopReason,
+                tokens: lastUsage?.totalTokens || 0,
+                duration: Date.now() - startTime + 'ms'
+              });
             }
           }
           // earlyCut: loop broke early on tool call completion, run finish logic now
@@ -437,7 +496,7 @@ export function registerAnthropic(app: Hono) {
           }
           
           } catch (err) {
-            console.error('[STREAM] Error during streaming:', err);
+            console.error('[STREAM] ❌ Error during streaming:', err);
             // 尝试发送错误事件（如果连接还在）
             if (!isAborted) {
               try {
@@ -467,6 +526,7 @@ export function registerAnthropic(app: Hono) {
       }
 
       // non-stream
+      console.log('[REQ] Non-streaming mode, collecting response...');
       let fullText = '';
       for await (const chunk of gen) {
         if (chunk.type === 'text') fullText += chunk.content ?? '';

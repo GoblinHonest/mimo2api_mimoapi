@@ -91,29 +91,59 @@ export function registerOpenAI(app: Hono) {
   });
 
   app.post('/v1/chat/completions', async (c) => {
+    console.log('\n[REQ] ========== New OpenAI Request ==========');
+    console.log('[REQ] Time:', new Date().toISOString());
+    console.log('[REQ] Method:', c.req.method, 'Path:', c.req.path);
+    
+    const startTime = Date.now();
     const authHeader = c.req.header('Authorization') ?? '';
     const apiKey = authHeader.replace(/^Bearer\s+/i, '').trim();
     const clientSessionId = c.req.header('X-Session-ID');
 
+    console.log('[REQ] Headers:', {
+      hasAuth: !!authHeader,
+      apiKeyPrefix: apiKey ? apiKey.slice(0, 8) + '...' : 'none',
+      sessionId: clientSessionId || 'none',
+      contentType: c.req.header('Content-Type')
+    });
+
     const account = apiKey ? getAccountByApiKey(apiKey) : getLeastBusyAccount();
-    if (!account) return c.json({ error: { message: 'Unauthorized or no active account', type: 'auth_error' } }, 401);
+    if (!account) {
+      console.log('[REQ] ❌ No account available');
+      return c.json({ error: { message: 'Unauthorized or no active account', type: 'auth_error' } }, 401);
+    }
+
+    console.log('[REQ] ✓ Account found:', {
+      id: account.id.slice(0, 8) + '...',
+      alias: account.alias || 'no-alias',
+      activeRequests: account.active_requests,
+      maxConcurrent: config.maxConcurrentPerAccount
+    });
 
     if (account.active_requests >= config.maxConcurrentPerAccount) {
+      console.log('[REQ] ❌ Rate limit exceeded');
       return c.json({ error: { message: 'Too many requests for this account', type: 'rate_limit' } }, 429);
     }
 
     const body = await c.req.json();
+    console.log('[REQ] Body parsed:', {
+      model: body.model || 'default',
+      stream: body.stream ?? false,
+      messages: body.messages?.length || 0,
+      tools: body.tools?.length || 0,
+      reasoning: !!body.reasoning_effort
+    });
     const { messages: cleanedMsgs, medias } = await extractImages(account, body.messages ?? []);
     const rawMessages: ChatMessage[] = cleanedMsgs as ChatMessage[];
     const tools: ToolDefinition[] | undefined = body.tools?.length ? body.tools : undefined;
     const isStream: boolean = body.stream ?? false;
     const enableThinking: boolean = !!body.reasoning_effort;
     const mimoModel = resolveModel(body.model ?? '');
-    const startTime = Date.now();
 
     // inject tool definitions into system prompt
     let messages = rawMessages;
     if (tools) {
+      console.log('[REQ] 🔧 Tools:', tools.map(t => t.name || (t as any).function?.name).join(', '));
       const toolPrompt = buildToolSystemPrompt(tools);
       const sysIdx = messages.findIndex(m => m.role === 'system');
       if (sysIdx >= 0) {
@@ -123,6 +153,7 @@ export function registerOpenAI(app: Hono) {
       }
     }
 
+    console.log('[REQ] 🚀 Starting request processing...');
     incrementActive(account.id);
     let sessionId: string | null = null;
     let lastUsage: MimoUsage | null = null;
@@ -134,35 +165,56 @@ export function registerOpenAI(app: Hono) {
       const embeddedSessionId = decodeSessionIdFromMessages(rawMessages);
       const effectiveSessionKey = clientSessionId ?? embeddedSessionId;
       let effectiveClientSessionId: string;
+      
+      console.log('[SESSION] Session key:', effectiveSessionKey ? effectiveSessionKey.slice(0, 16) + '...' : 'none (new session)');
+      
       if (effectiveSessionKey) {
+        console.log('[SESSION] Looking up existing session...');
         const { conversationId: cid, reuseHistory, session } = await getOrCreateSession(account.id, effectiveSessionKey, messages);
         conversationId = cid;
         sessionId = session.id;
         effectiveClientSessionId = session.client_session_id;
         query = (reuseHistory && !tools) ? extractLastUserMessage(messages) : serializeMessages(messages);
+        console.log('[SESSION] ✓ Session found:', {
+          sessionId: sessionId.slice(0, 8) + '...',
+          conversationId: conversationId.slice(0, 8) + '...',
+          reuseHistory,
+          tokens: session.cumulative_prompt_tokens
+        });
       } else {
+        console.log('[SESSION] Creating new session...');
         conversationId = uuidv4().replace(/-/g, '');
         effectiveClientSessionId = conversationId;
         query = serializeMessages(messages);
+        console.log('[SESSION] ✓ New conversation:', conversationId.slice(0, 8) + '...');
       }
 
+      console.log('[MIMO] Calling MiMo API...', {
+        model: mimoModel,
+        thinking: enableThinking,
+        queryLength: query.length,
+        hasMedia: medias.length > 0
+      });
+      
       const gen = callMimo(account, conversationId, query, enableThinking, mimoModel, medias);
       const responseId = `chatcmpl-${uuidv4().replace(/-/g, '')}`;
       const created = Math.floor(Date.now() / 1000);
 
       if (isStream) {
+        console.log('[STREAM] Starting streaming response...');
         c.header('Content-Type', 'text/event-stream');
         c.header('Cache-Control', 'no-cache');
         c.header('X-Accel-Buffering', 'no');
         return stream(c, async (s) => {
           let isAborted = false;
+          let chunkCount = 0;
           
           // 监听客户端断开
           const req = c.req.raw as any;
           if (req.on) {
             req.on('close', () => {
               isAborted = true;
-              console.log('[STREAM] Client disconnected');
+              console.log('[STREAM] ⚠️ Client disconnected after', chunkCount, 'chunks');
             });
           }
           
@@ -170,14 +222,16 @@ export function registerOpenAI(app: Hono) {
             if (isAborted) return;  // 客户端已断开，不再发送
             try {
               await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
+              chunkCount++;
             } catch (err) {
-              console.error('[STREAM] Write error:', err);
+              console.error('[STREAM] ❌ Write error:', err);
               isAborted = true;
               throw err;
             }
           };
           
           try {
+            console.log('[STREAM] Waiting for MiMo response...');
             let pastThink = false;
             let thinkingStarted = false;
             let thinkBuf = '';
@@ -295,11 +349,17 @@ export function registerOpenAI(app: Hono) {
               }
               await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage: usageChunk })}\n\n`);
               await s.write('data: [DONE]\n\n');
+              console.log('[STREAM] ✓ Completed:', {
+                chunks: chunkCount,
+                finishReason,
+                tokens: lastUsage?.totalTokens || 0,
+                duration: Date.now() - startTime + 'ms'
+              });
             }
           }
           
           } catch (err) {
-            console.error('[STREAM] Error during streaming:', err);
+            console.error('[STREAM] ❌ Error during streaming:', err);
             // 尝试发送错误（如果连接还在）
             if (!isAborted) {
               try {
@@ -324,6 +384,7 @@ export function registerOpenAI(app: Hono) {
       }
 
       // non-stream
+      console.log('[REQ] Non-streaming mode, collecting response...');
       let fullText = '';
       for await (const chunk of gen) {
         if (chunk.type === 'text') fullText += chunk.content ?? '';

@@ -25,12 +25,25 @@ export async function getOrCreateSession(
   clientSessionId: string,
   messages: unknown[]
 ): Promise<{ conversationId: string; reuseHistory: boolean; session: Session }> {
+  console.log('[SESSION] getOrCreateSession:', {
+    accountId: accountId.slice(0, 8) + '...',
+    clientSessionId: clientSessionId.slice(0, 16) + '...',
+    messageCount: Array.isArray(messages) ? messages.length : 0
+  });
+  
   const existing = db.prepare(
     'SELECT * FROM sessions WHERE account_id = ? AND client_session_id = ? AND is_expired = 0'
   ).get(accountId, clientSessionId) as Session | undefined;
 
   if (existing) {
+    console.log('[SESSION] Found existing session:', {
+      id: existing.id.slice(0, 8) + '...',
+      tokens: existing.cumulative_prompt_tokens,
+      threshold: config.contextResetThreshold
+    });
+    
     if (existing.cumulative_prompt_tokens > config.contextResetThreshold) {
+      console.log('[SESSION] Token limit exceeded, resetting session...');
       // Token 超限，需要重置会话
       // 使用事务确保原子性
       const transaction = db.transaction(() => {
@@ -54,15 +67,21 @@ export async function getOrCreateSession(
       
       const result = transaction();
       const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(result.id) as Session;
+      console.log('[SESSION] ✓ New session created after reset:', result.id.slice(0, 8) + '...');
       return { conversationId: result.conversationId, reuseHistory: false, session };
     } else {
       const currentHash = hashMessages(messages);
       const reuseHistory = currentHash === existing.last_messages_hash;
       db.prepare("UPDATE sessions SET last_used_at = datetime('now') WHERE id = ?").run(existing.id);
+      console.log('[SESSION] ✓ Reusing session:', {
+        reuseHistory,
+        hashMatch: reuseHistory
+      });
       return { conversationId: existing.conversation_id, reuseHistory, session: existing };
     }
   }
 
+  console.log('[SESSION] No existing session, creating new...');
   // 没有现有会话，创建新的
   // 使用事务和 INSERT OR REPLACE 防止并发冲突
   const transaction = db.transaction(() => {
@@ -85,6 +104,7 @@ export async function getOrCreateSession(
   
   const result = transaction();
   const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(result.id) as Session;
+  console.log('[SESSION] ✓ New session created:', result.id.slice(0, 8) + '...');
   return { conversationId: result.conversationId, reuseHistory: false, session };
 }
 
