@@ -228,9 +228,9 @@ export function registerAnthropic(app: Hono) {
                   }
                   // route afterThink through pendingText for tool call detection
                   if (afterThink) {
-                    // 将 afterThink 重新赋值给 text，让后续的 pastThink 分支处理
+                    // 将 afterThink 重新赋值给 text，继续处理（不要 continue）
                     text = afterThink;
-                    // 不要 continue，让代码继续执行到 pastThink 分支
+                    // 注意：这里不能 continue，需要继续执行到下面的 pastThink 处理逻辑
                   } else {
                     continue;  // 如果没有 afterThink，跳过本次循环
                   }
@@ -242,8 +242,12 @@ export function registerAnthropic(app: Hono) {
                     thinkBuf += text;
                   }
                   // strip: discard
+                  continue;  // 跳过本次循环，不处理 pastThink 分支
                 }
-              } else {
+              }
+              
+              // pastThink 处理逻辑（无论是一开始就 pastThink，还是刚刚设置的）
+              if (pastThink) {
                 // strip any second <think>...</think> blocks that leak through after pastThink
                 text = text.replace(/<think>[\s\S]*?<\/think>/g, '');
                 const t2Idx = text.indexOf('<think>');
