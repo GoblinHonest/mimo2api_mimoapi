@@ -133,13 +133,16 @@ export function registerOpenAI(app: Hono) {
 
       const embeddedSessionId = decodeSessionIdFromMessages(rawMessages);
       const effectiveSessionKey = clientSessionId ?? embeddedSessionId;
+      let effectiveClientSessionId: string;
       if (effectiveSessionKey) {
         const { conversationId: cid, reuseHistory, session } = await getOrCreateSession(account.id, effectiveSessionKey, messages);
         conversationId = cid;
         sessionId = session.id;
+        effectiveClientSessionId = session.client_session_id;
         query = (reuseHistory && !tools) ? extractLastUserMessage(messages) : serializeMessages(messages);
       } else {
         conversationId = uuidv4().replace(/-/g, '');
+        effectiveClientSessionId = conversationId;
         query = serializeMessages(messages);
       }
 
@@ -181,7 +184,13 @@ export function registerOpenAI(app: Hono) {
                     await sendDelta({ content: '<think>' + thinkBuf + '</think>' });
                   }
                   // route afterThink through pendingText for tool call detection
-                  if (afterThink) pendingText += afterThink;
+                  if (afterThink) {
+                    // 将 afterThink 重新赋值给 text，让后续的 pastThink 分支处理
+                    text = afterThink;
+                    // 不要 continue，让代码继续执行到 pastThink 分支
+                  } else {
+                    continue;  // 如果没有 afterThink，跳过本次循环
+                  }
                 } else {
                   // still inside think
                   if (config.thinkMode === 'separate') {
@@ -243,12 +252,15 @@ export function registerOpenAI(app: Hono) {
               } : undefined;
               let finishReason = 'stop';
               // 先发零宽标记到 content，tool_calls 时客户端也会保留此 content
-              await sendDelta({ content: encodeSessionId(conversationId) });
+              await sendDelta({ content: encodeSessionId(effectiveClientSessionId) });
               if (toolCallBuf && hasToolCallMarker(toolCallBuf)) {
                 const calls = parseToolCalls(toolCallBuf);
                 if (calls.length > 0) {
                   finishReason = 'tool_calls';
                   await sendDelta({ tool_calls: toOpenAIToolCalls(calls).map((tc, i) => ({ index: i, ...tc })) });
+                } else {
+                  // 如果识别到了标记但解析不出有效的工具调用，则把原始内容发出去，防止内容丢失
+                  await sendDelta({ content: toolCallBuf });
                 }
               }
               await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage: usageChunk })}\n\n`);
@@ -291,7 +303,7 @@ export function registerOpenAI(app: Hono) {
         if (calls.length > 0) {
           return c.json({
             id: responseId, object: 'chat.completion', created, model: mimoModel,
-            choices: [{ index: 0, message: { role: 'assistant', content: encodeSessionId(conversationId), tool_calls: toOpenAIToolCalls(calls) }, finish_reason: 'tool_calls' }],
+            choices: [{ index: 0, message: { role: 'assistant', content: encodeSessionId(effectiveClientSessionId), tool_calls: toOpenAIToolCalls(calls) }, finish_reason: 'tool_calls' }],
             usage: usageObj,
           });
         }
@@ -299,7 +311,7 @@ export function registerOpenAI(app: Hono) {
 
       return c.json({
         id: responseId, object: 'chat.completion', created, model: mimoModel,
-        choices: [{ index: 0, message: { role: 'assistant', content: fullText + encodeSessionId(conversationId) }, finish_reason: 'stop' }],
+        choices: [{ index: 0, message: { role: 'assistant', content: fullText + encodeSessionId(effectiveClientSessionId) }, finish_reason: 'stop' }],
         usage: usageObj,
       });
     } catch (err: unknown) {

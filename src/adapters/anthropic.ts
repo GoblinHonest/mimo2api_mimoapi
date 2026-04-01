@@ -153,14 +153,17 @@ export function registerAnthropic(app: Hono) {
       const bodyMsgsRaw = (body.messages as unknown[]) ?? [];
       const embeddedSessionId = decodeSessionIdFromMessages(bodyMsgsRaw);
       const effectiveSessionKey = clientSessionId ?? embeddedSessionId;
+      let effectiveClientSessionId: string;
       if (effectiveSessionKey) {
         const { conversationId: cid, reuseHistory, session } = await getOrCreateSession(account.id, effectiveSessionKey, messages);
         conversationId = cid;
         sessionId = session.id;
+        effectiveClientSessionId = session.client_session_id;
         // when tools are present, always send full messages so the tool definitions are included
         query = (reuseHistory && !tools) ? extractLastUserMessage(messages) : serializeMessages(messages);
       } else {
         conversationId = uuidv4().replace(/-/g, '');
+        effectiveClientSessionId = conversationId;
         query = serializeMessages(messages);
       }
 
@@ -224,7 +227,13 @@ export function registerAnthropic(app: Hono) {
                     await sendEvent('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '<think>' + thinkBuf + '</think>' } });
                   }
                   // route afterThink through pendingText for tool call detection
-                  if (afterThink) pendingText += afterThink;
+                  if (afterThink) {
+                    // 将 afterThink 重新赋值给 text，让后续的 pastThink 分支处理
+                    text = afterThink;
+                    // 不要 continue，让代码继续执行到 pastThink 分支
+                  } else {
+                    continue;  // 如果没有 afterThink，跳过本次循环
+                  }
                 } else {
                   // still inside think
                   if (config.thinkMode === 'separate') {
@@ -244,23 +253,25 @@ export function registerAnthropic(app: Hono) {
                 const idx = config.thinkMode === 'separate' ? 1 : 0;
                 if (toolCallBuf !== null) {
                   toolCallBuf += text;
-                  if (toolCallBuf.includes('</tool_call>') || toolCallBuf.includes('</function_calls>')) {
-                    earlyCut = true;
-                    break;
-                  }
                 } else {
                   pendingText += text;
                   const fc1 = pendingText.indexOf('<function_calls>'), fc2 = pendingText.indexOf('<tool_call>');
                   const fcIdx = fc1 === -1 ? fc2 : fc2 === -1 ? fc1 : Math.min(fc1, fc2);
+
                   if (fcIdx !== -1) {
+                    // 只要检测到开始标记，就把之前安全的文本发出去，然后转入工具收集模式
                     const before = pendingText.slice(0, fcIdx);
                     if (before) await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx, delta: { type: 'text_delta', text: before } });
                     toolCallBuf = pendingText.slice(fcIdx);
                     pendingText = '';
                   } else {
-                    const safe = pendingText.slice(0, Math.max(0, pendingText.length - 15));
-                    if (safe) await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx, delta: { type: 'text_delta', text: safe } });
-                    pendingText = pendingText.slice(safe.length);
+                    // 保持一个缓冲区（比如 15 字符），防止标签被截断时被错误发出
+                    const safeLen = Math.max(0, pendingText.length - 15);
+                    if (safeLen > 0) {
+                      const safe = pendingText.slice(0, safeLen);
+                      await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx, delta: { type: 'text_delta', text: safe } });
+                      pendingText = pendingText.slice(safeLen);
+                    }
                   }
                 }
               }
@@ -296,7 +307,7 @@ export function registerAnthropic(app: Hono) {
               // close the last active block
               const lastIdx = config.thinkMode === 'separate' && pastThink ? 1 : 0;
               // 在关闭 block 前附加零宽标记，保证客户端能收到
-              await sendEvent('content_block_delta', { type: 'content_block_delta', index: lastIdx, delta: { type: 'text_delta', text: encodeSessionId(conversationId) } });
+              await sendEvent('content_block_delta', { type: 'content_block_delta', index: lastIdx, delta: { type: 'text_delta', text: encodeSessionId(effectiveClientSessionId) } });
               await sendEvent('content_block_stop', { type: 'content_block_stop', index: lastIdx });
               let stopReason = 'end_turn';
               if (toolCallBuf && hasToolCallMarker(toolCallBuf)) {
@@ -341,15 +352,19 @@ export function registerAnthropic(app: Hono) {
               }
             }
             if (pendingText) {
-              const idx2 = config.thinkMode === 'separate' ? 1 : 0;
-              if (toolCallBuf !== null) toolCallBuf += pendingText;
-              else if (hasToolCallMarker(pendingText)) toolCallBuf = pendingText;
-              else await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx2, delta: { type: 'text_delta', text: pendingText } });
+              const idx2 = (config.thinkMode === 'separate' && pastThink) ? 1 : 0;
+              if (toolCallBuf !== null) {
+                toolCallBuf += pendingText;
+              } else if (hasToolCallMarker(pendingText)) {
+                toolCallBuf = pendingText;
+              } else {
+                await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx2, delta: { type: 'text_delta', text: pendingText } });
+              }
               pendingText = '';
             }
             const lastIdx = config.thinkMode === 'separate' && pastThink ? 1 : 0;
             // 在关闭 block 前附加零宽标记
-            await sendEvent('content_block_delta', { type: 'content_block_delta', index: lastIdx, delta: { type: 'text_delta', text: encodeSessionId(conversationId) } });
+            await sendEvent('content_block_delta', { type: 'content_block_delta', index: lastIdx, delta: { type: 'text_delta', text: encodeSessionId(effectiveClientSessionId) } });
             await sendEvent('content_block_stop', { type: 'content_block_stop', index: lastIdx });
             let stopReason = 'end_turn';
             if (toolCallBuf && hasToolCallMarker(toolCallBuf)) {
@@ -364,6 +379,7 @@ export function registerAnthropic(app: Hono) {
                   await sendEvent('content_block_stop', { type: 'content_block_stop', index: blockIdx });
                 }
               } else {
+                // 如果解析失败，把原始内容作为文本发出去，防止内容丢失
                 await sendEvent('content_block_delta', { type: 'content_block_delta', index: lastIdx, delta: { type: 'text_delta', text: toolCallBuf } });
               }
             }
@@ -398,7 +414,7 @@ export function registerAnthropic(app: Hono) {
       }
 
       const content: unknown[] = [];
-      const marker = encodeSessionId(conversationId);
+      const marker = encodeSessionId(effectiveClientSessionId);
       if (config.thinkMode === 'separate') {
         const { thinkContent, mainContent } = processThinkContent(fullText);
         if (thinkContent) content.push({ type: 'thinking', thinking: thinkContent });
