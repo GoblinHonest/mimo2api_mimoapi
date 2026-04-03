@@ -233,7 +233,14 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
     // 尝试 XML 格式
     const name = extractName(inner);
     if (name) {
-      const args = parseXmlParam(inner);
+      // 先尝试提取 <arguments> 或 <parameters> 标签的内容
+      let argsXml = inner;
+      const argsMatch = inner.match(/<(?:arguments|parameters|input)>([\s\S]*?)<\/(?:arguments|parameters|input)>/i);
+      if (argsMatch) {
+        argsXml = argsMatch[1];
+      }
+      const args = parseXmlParam(argsXml);
+      console.log('[PARSE:DEBUG] Extracted args from XML:', { name, argsXml: argsXml.slice(0, 200), args });
       calls.push({ id: callId, name, arguments: args });
     } else {
       log('warn', 'Failed to extract tool name', { inner: inner.slice(0, 100) });
