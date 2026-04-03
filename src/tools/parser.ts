@@ -76,17 +76,35 @@ function repairJson(json: string): string {
   return repaired;
 }
 
-// 智能值解析
+// 智能值解析（递归解析 JSON 字符串）
 function parseValue(val: string): unknown {
   if (!val) return '';
   
   // 尝试 JSON 解析
   try {
-    return JSON.parse(val);
+    const parsed = JSON.parse(val);
+    // 如果解析结果是字符串，尝试再次解析（处理双重编码的情况）
+    if (typeof parsed === 'string' && (parsed.startsWith('{') || parsed.startsWith('['))) {
+      try {
+        return JSON.parse(parsed);
+      } catch {
+        return parsed;
+      }
+    }
+    return parsed;
   } catch {
     // 尝试修复后再解析
     try {
-      return JSON.parse(repairJson(val));
+      const repaired = JSON.parse(repairJson(val));
+      // 同样处理双重编码
+      if (typeof repaired === 'string' && (repaired.startsWith('{') || repaired.startsWith('['))) {
+        try {
+          return JSON.parse(repaired);
+        } catch {
+          return repaired;
+        }
+      }
+      return repaired;
     } catch {
       // 返回原始字符串
       return val;
