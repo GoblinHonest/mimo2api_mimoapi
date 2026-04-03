@@ -286,6 +286,8 @@ export function parseToolCalls(text: string): ParsedToolCall[] {
 
   // 清理不可见字符
   const cleanText = cleanInvisibleChars(text);
+  
+  console.log('[PARSE:DEBUG] Tool call text preview:', cleanText.slice(0, 500));
 
   // 检测格式并解析
   let calls: ParsedToolCall[] = [];
@@ -293,9 +295,11 @@ export function parseToolCalls(text: string): ParsedToolCall[] {
   if (cleanText.includes('<tool_call>')) {
     calls = parseMimoNativeToolCalls(cleanText);
     log('info', `Parsed ${calls.length} MiMo native tool calls`);
+    console.log('[PARSE:DEBUG] Parsed calls:', JSON.stringify(calls, null, 2));
   } else if (cleanText.includes('<function_calls>')) {
     calls = parseAnthropicToolCalls(cleanText);
     log('info', `Parsed ${calls.length} Anthropic tool calls`);
+    console.log('[PARSE:DEBUG] Parsed calls:', JSON.stringify(calls, null, 2));
   }
 
   // 验证结果
@@ -306,6 +310,7 @@ export function parseToolCalls(text: string): ParsedToolCall[] {
     }
     if (!call.arguments || typeof call.arguments !== 'object') {
       log('warn', 'Invalid tool call: missing or invalid arguments', call);
+      console.log('[PARSE:ERROR] Invalid arguments type:', typeof call.arguments, call.arguments);
       return false;
     }
     return true;
