@@ -52,6 +52,22 @@ function cleanInvisibleChars(text: string): string {
 function repairJson(json: string): string {
   let repaired = json;
 
+  // 0. 修复 Windows 文件路径中的反斜杠（在处理字符串之前）
+  // 将单个反斜杠替换为双反斜杠，但保留已经转义的
+  repaired = repaired.replace(/"([^"]*?)"/g, (match, content) => {
+    // 只处理看起来像文件路径的字符串（包含 :\ 或多个 \）
+    if (content.includes(':\\') || (content.match(/\\/g) || []).length > 1) {
+      // 先将所有 \\ 替换为占位符，避免重复转义
+      let fixed = content.replace(/\\\\/g, '\u0000ESCAPED_BACKSLASH\u0000');
+      // 将单个 \ 替换为 \\
+      fixed = fixed.replace(/\\/g, '\\\\');
+      // 恢复占位符
+      fixed = fixed.replace(/\u0000ESCAPED_BACKSLASH\u0000/g, '\\\\');
+      return `"${fixed}"`;
+    }
+    return match;
+  });
+
   // 1. 处理字符串内的换行符（保护已有的字符串）
   repaired = repaired.replace(
     /"([^"\\]*(\\.[^"\\]*)*)"/g,
@@ -179,12 +195,25 @@ function extractName(inner: string): string | null {
   m = inner.match(/<(?:name|function|tool_name)=["']?([^"'<>\s/]+)["']?/i);
   if (m) return m[1].trim();
 
-  // 3. JSON 格式中的 name 字段
+  // 3. JSON 格式中的 name 字段 - 尝试更激进的修复
   if (inner.includes('"name"') || inner.includes("'name'")) {
     try {
-      const parsed = JSON.parse(repairJson(inner));
+      // 先尝试直接解析
+      const parsed = JSON.parse(inner);
       if (parsed.name) return String(parsed.name);
-    } catch { /* continue */ }
+    } catch {
+      // 如果失败，尝试修复后解析
+      try {
+        const parsed = JSON.parse(repairJson(inner));
+        if (parsed.name) return String(parsed.name);
+      } catch {
+        // 如果还是失败，尝试用正则直接提取 name 字段的值
+        const nameMatch = inner.match(/"name"\s*:\s*"([^"]+)"/);
+        if (nameMatch) return nameMatch[1];
+        const nameMatch2 = inner.match(/'name'\s*:\s*'([^']+)'/);
+        if (nameMatch2) return nameMatch2[1];
+      }
+    }
   }
 
   // 4. 第一个非保留标签
@@ -200,12 +229,52 @@ function extractName(inner: string): string | null {
   return null;
 }
 
+// 从参数推断工具名称（当名称缺失时）
+function inferToolNameFromArgs(args: Record<string, unknown>): string | null {
+  const keys = Object.keys(args);
+  
+  // Read 工具：通常有 file_path 或 path
+  if (keys.includes('file_path') || (keys.includes('path') && keys.length === 1)) {
+    return 'Read';
+  }
+  
+  // Write 工具：通常有 file_path 和 content
+  if (keys.includes('file_path') && keys.includes('content')) {
+    return 'Write';
+  }
+  
+  // Edit 工具：通常有 file_path 和 edits
+  if (keys.includes('file_path') && keys.includes('edits')) {
+    return 'Edit';
+  }
+  
+  // Bash 工具：通常有 command
+  if (keys.includes('command') && !keys.includes('file_path')) {
+    return 'Bash';
+  }
+  
+  // Grep 工具：通常有 pattern 或 regex
+  if (keys.includes('pattern') || keys.includes('regex')) {
+    return 'Grep';
+  }
+  
+  // Glob 工具：通常有 glob 或 glob_pattern
+  if (keys.includes('glob') || keys.includes('glob_pattern')) {
+    return 'Glob';
+  }
+  
+  return null;
+}
+
 // 解析 MiMo 原生格式
 function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
   const calls: ParsedToolCall[] = [];
   const cleanText = cleanInvisibleChars(text);
 
-  const blockRe = /<tool_call>([\s\S]*?)<\/tool_call>/gi;
+  // 支持两种格式：
+  // 1. <tool_call>...</tool_call>
+  // 2. <tool_call name="ToolName">...</tool_call>
+  const blockRe = /<tool_call(?:\s+name=["']([^"']+)["'])?>([\s\S]*?)<\/tool_call>/gi;
   let block: RegExpExecArray | null;
   let count = 0;
 
@@ -215,7 +284,8 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
       break;
     }
 
-    let inner = block[1].trim();
+    const toolCallName = block[1]; // 从 <tool_call name="..."> 提取的名称
+    let inner = block[2].trim();
     
     // 移除可能的 tool_result 包装
     inner = inner.replace(/^<tool_result>\s*/i, '').replace(/\s*<\/tool_result>$/i, '');
@@ -240,7 +310,26 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
     }
 
     // 尝试 XML 格式
-    const name = extractName(inner);
+    let name = toolCallName || extractName(inner);
+    
+    // 如果还是没有名称，尝试从 arguments 推断
+    if (!name) {
+      // 先提取 arguments 看看能否推断
+      let argsXml = inner;
+      const argsMatch = inner.match(/<(?:arguments|parameters|input)>([\s\S]*?)<\/(?:arguments|parameters|input)>/i);
+      if (argsMatch) {
+        argsXml = argsMatch[1];
+      }
+      const tempArgs = parseXmlParam(argsXml);
+      name = inferToolNameFromArgs(tempArgs);
+      
+      if (name) {
+        log('info', `Inferred tool name from arguments: ${name}`, { args: tempArgs });
+        calls.push({ id: callId, name, arguments: tempArgs });
+        continue;
+      }
+    }
+    
     if (name) {
       // 先尝试提取 <arguments> 或 <parameters> 标签的内容
       let argsXml = inner;
