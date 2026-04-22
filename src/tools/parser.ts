@@ -366,6 +366,12 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
           continue;
         }
       } catch (err) {
+        // 尝试解析多个 JSON 对象（当多个工具调用在一个 <tool_call> 块内时）
+        const multiCalls = parseNamedJsonToolCalls(inner);
+        if (multiCalls.length > 0) {
+          calls.push(...multiCalls);
+          continue;
+        }
         log('warn', 'JSON parse failed, falling back to XML', {
           error: String(err),
           innerLength: inner.length,
@@ -657,6 +663,63 @@ function parseDirectToolNameFormat(text: string): ParsedToolCall[] {
   return calls;
 }
 
+// 解析直接 JSON 格式的工具调用（如 {"name": "ToolName", "arguments": {...}}）
+// 处理 MiMo 未包裹 <tool_call> 标签时的输出
+function parseNamedJsonToolCalls(text: string): ParsedToolCall[] {
+  const calls: ParsedToolCall[] = [];
+  const cleanText = cleanInvisibleChars(text);
+
+  const pattern = /\{\s*"name"\s*:/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(cleanText)) !== null) {
+    if (calls.length >= CONFIG.MAX_TOOL_CALLS) break;
+
+    const start = match.index;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let end = -1;
+
+    for (let i = start; i < cleanText.length; i++) {
+      const ch = cleanText[i];
+
+      if (escape) { escape = false; continue; }
+      if (ch === '\\' && inString) { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+
+      if (!inString) {
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0) { end = i + 1; break; }
+        }
+      }
+    }
+
+    if (end === -1) continue;
+
+    const candidate = cleanText.slice(start, end);
+    try {
+      const parsed = parseJsonSafely(candidate);
+      if (parsed.name && typeof parsed.name === 'string' &&
+          (parsed.arguments !== undefined || parsed.parameters !== undefined || parsed.input !== undefined)) {
+        const args = (parsed.arguments ?? parsed.parameters ?? parsed.input ?? {}) as Record<string, unknown>;
+        calls.push({
+          id: parsed.id ?? generateCallId(),
+          name: String(parsed.name),
+          arguments: typeof args === 'object' && args !== null ? args : {}
+        });
+        pattern.lastIndex = end;
+      }
+    } catch {
+      // Skip invalid JSON
+    }
+  }
+
+  return calls;
+}
+
 // 主解析函数
 export function parseToolCalls(text: string): ParsedToolCall[] {
   // 输入验证
@@ -694,11 +757,27 @@ export function parseToolCalls(text: string): ParsedToolCall[] {
       log('info', `Parsed ${calls.length} JSON format tool calls`);
       console.log('[PARSE:DEBUG] Parsed calls:', JSON.stringify(calls, null, 2));
     }
+  } else if (cleanText.includes('"name"') && cleanText.includes('"arguments"')) {
+    // {"name": "ToolName", "arguments": {...}} 格式（MiMo 未包裹 <tool_call> 时）
+    calls = parseNamedJsonToolCalls(cleanText);
+    if (calls.length > 0) {
+      log('info', `Parsed ${calls.length} named JSON format tool calls`);
+      console.log('[PARSE:DEBUG] Parsed calls:', JSON.stringify(calls, null, 2));
+    }
   } else {
     // 尝试直接工具名格式
     calls = parseDirectToolNameFormat(cleanText);
     if (calls.length > 0) {
       log('info', `Parsed ${calls.length} direct tool name format calls`);
+      console.log('[PARSE:DEBUG] Parsed calls:', JSON.stringify(calls, null, 2));
+    }
+  }
+
+  // 终极回退：如果所有解析器都失败，尝试 {"name": "...", "arguments": {...}} 格式
+  if (calls.length === 0 && cleanText.includes('"name"') && cleanText.includes('"arguments"')) {
+    calls = parseNamedJsonToolCalls(cleanText);
+    if (calls.length > 0) {
+      log('info', `Parsed ${calls.length} named JSON format tool calls (fallback)`);
       console.log('[PARSE:DEBUG] Parsed calls:', JSON.stringify(calls, null, 2));
     }
   }
@@ -762,6 +841,12 @@ export function hasToolCallMarker(text: string): boolean {
     if (!excludedTags.includes(tagName)) {
       return true;
     }
+  }
+
+  // 检查 {"name": 格式（MiMo 未包裹 <tool_call> 标签时的输出）
+  if (cleanText.includes('"name"') && cleanText.includes('"arguments"')) {
+    const namedJsonMatch = cleanText.match(/\{\s*"name"\s*:\s*"[A-Z]/);
+    if (namedJsonMatch) return true;
   }
 
   return false;

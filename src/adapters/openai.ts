@@ -320,6 +320,13 @@ export function registerOpenAI(app: Hono) {
                     else if (shBlockIdx !== -1) fc6 = shBlockIdx;
                     else if (shellBlockIdx !== -1) fc6 = shellBlockIdx;
 
+                    // 检测 {"name": 格式的工具调用（MiMo 未包裹 <tool_call> 时）
+                    let fc7 = -1;
+                    const namedJsonMatch = pendingText.match(/\{\s*"name"\s*:\s*"[A-Z]/);
+                    if (namedJsonMatch && namedJsonMatch.index !== undefined) {
+                      fc7 = namedJsonMatch.index;
+                    }
+
                     if (fc5 !== -1) {
                       console.log('[STREAM:DEBUG] Detected JSON tool call at position:', fc5, 'pendingText length:', pendingText.length);
                     }
@@ -327,7 +334,7 @@ export function registerOpenAI(app: Hono) {
                       console.log('[STREAM:DEBUG] Detected bash code block at position:', fc6, 'pendingText length:', pendingText.length);
                     }
 
-                    const fcIdx = [fc1, fc2, fc3, fc4, fc5, fc6].filter(i => i !== -1).sort((a, b) => a - b)[0] ?? -1;
+                    const fcIdx = [fc1, fc2, fc3, fc4, fc5, fc6, fc7].filter(i => i !== -1).sort((a, b) => a - b)[0] ?? -1;
                     if (fcIdx !== -1) {
                       let before = pendingText.slice(0, fcIdx);
                       let toolCallStart = pendingText.slice(fcIdx);
@@ -362,7 +369,7 @@ export function registerOpenAI(app: Hono) {
                     } else {
                       // 增加 safe buffer 大小，避免 ```json 被分割
                       // 如果 pendingText 包含 ``` 但还没有完整的工具调用标记，保留更多字符
-                      let safeBufferSize = 15;
+                      let safeBufferSize = 20;
                       if (pendingText.includes('```') && !pendingText.includes('```\n')) {
                         // 可能是 ```json 的开始，保留更多
                         safeBufferSize = 30;

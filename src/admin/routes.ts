@@ -278,5 +278,16 @@ export function registerAdmin(app: Hono) {
     return c.json({ message: 'Config updated' });
   });
 
+  admin.patch('/admin-key', async (c) => {
+    const body = await c.req.json();
+    if (!body.newKey || typeof body.newKey !== 'string' || body.newKey.trim().length === 0) {
+      return c.json({ error: 'New key is required' }, 400);
+    }
+    const newKey = body.newKey.trim();
+    (config as Record<string, unknown>).adminKey = newKey;
+    try { updateEnvFile({ ADMIN_KEY: newKey }); } catch {}
+    return c.json({ message: 'Admin key updated' });
+  });
+
   app.route('/admin', admin);
 }

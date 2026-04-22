@@ -285,14 +285,20 @@ export function registerAnthropic(app: Hono) {
                     const fc1 = pendingText.indexOf('<function_calls>');
                     const fc2 = pendingText.indexOf('<tool_call>');
                     const fc3 = pendingText.indexOf('<toolcall');
-                    const fcIdx = [fc1, fc2, fc3].filter(i => i !== -1).sort((a, b) => a - b)[0] ?? -1;
+                    // 检测 {"name": 格式的工具调用（MiMo 未包裹 <tool_call> 时）
+                    let fc4 = -1;
+                    const namedJsonMatch = pendingText.match(/\{\s*"name"\s*:\s*"[A-Z]/);
+                    if (namedJsonMatch && namedJsonMatch.index !== undefined) {
+                      fc4 = namedJsonMatch.index;
+                    }
+                    const fcIdx = [fc1, fc2, fc3, fc4].filter(i => i !== -1).sort((a, b) => a - b)[0] ?? -1;
                     if (fcIdx !== -1) {
                       const before = pendingText.slice(0, fcIdx);
                       if (before) await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx, delta: { type: 'text_delta', text: before } });
                       toolCallBuf = pendingText.slice(fcIdx);
                       pendingText = '';
                     } else {
-                      const safeLen = Math.max(0, pendingText.length - 15);
+                      const safeLen = Math.max(0, pendingText.length - 20);
                       if (safeLen > 0) {
                         await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx, delta: { type: 'text_delta', text: pendingText.slice(0, safeLen) } });
                         pendingText = pendingText.slice(safeLen);

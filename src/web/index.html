@@ -44,11 +44,19 @@
   .table tr:hover td{background:var(--c-surface-hover)}
   .toast-item{background:var(--c-toast-bg);border:1px solid var(--c-border);border-radius:8px;padding:12px 16px;margin-top:8px;font-size:13px;animation:slideIn .3s ease}
   @keyframes slideIn{from{transform:translateX(100px);opacity:0}to{transform:none;opacity:1}}
+  @keyframes modalIn{from{transform:scale(.95) translateY(8px);opacity:0}to{transform:none;opacity:1}}
+  .modal-card{animation:modalIn .2s ease}
   .page-btn{padding:4px 10px;border:1px solid var(--c-border);background:var(--c-surface);color:var(--c-text-3);border-radius:6px;cursor:pointer;font-size:12px}
   .page-btn.active,.page-btn:hover{border-color:#6366f1;color:#6366f1}
-  input,textarea,select{background:var(--c-input-bg);border:1px solid var(--c-border);border-radius:8px;padding:8px 12px;color:var(--c-text);font-size:13px;width:100%}
-  input:focus,textarea:focus,select:focus{outline:none;border-color:#6366f1}
+  input,textarea,select{background:var(--c-input-bg) !important;border:1px solid var(--c-border) !important;border-radius:8px !important;padding:10px 14px !important;color:var(--c-text) !important;font-size:13px !important;width:100%;transition:border-color .2s,box-shadow .2s;line-height:1.5 !important;-webkit-appearance:none;-moz-appearance:none;appearance:none !important;font-family:inherit !important}
+  input::placeholder,textarea::placeholder{color:var(--c-text-5) !important;opacity:1 !important}
+  input:hover,textarea:hover,select:hover{border-color:var(--c-text-5) !important}
+  input:focus,textarea:focus,select:focus{outline:none !important;border-color:#6366f1 !important;box-shadow:0 0 0 3px rgba(99,102,241,.15) !important}
+  input:disabled{opacity:.5;cursor:not-allowed}
   textarea{resize:vertical;min-height:80px}
+  select{cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") !important;background-repeat:no-repeat !important;background-position:right 12px center !important;padding-right:36px !important}
+  input[type="number"]{-moz-appearance:textfield}
+  input[type="number"]::-webkit-inner-spin-button,input[type="number"]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
   #sidebarOverlay{display:none;position:fixed;inset:0;background:var(--c-overlay);z-index:30}
   #sidebarOverlay.active{display:block}
   /* Light theme overrides for Tailwind utility classes */
@@ -94,6 +102,20 @@
 <body class="bg-[#0f1117] text-slate-200 h-screen flex flex-col overflow-hidden">
 <div id="toast" class="fixed bottom-5 right-5 z-50 pointer-events-none"></div>
 <div id="sidebarOverlay" onclick="closeSidebar()"></div>
+<!-- 自定义弹窗 -->
+<div id="modalOverlay" class="fixed inset-0 z-[100] hidden items-center justify-center" style="background:var(--c-overlay);backdrop-filter:blur(2px)">
+  <div class="modal-card rounded-xl p-6 w-full max-w-md mx-4" style="background:var(--c-surface);border:1px solid var(--c-border);box-shadow:0 25px 50px -12px rgba(0,0,0,.4)">
+    <h3 id="modalTitle" class="text-base font-semibold mb-2" style="color:var(--c-text)"></h3>
+    <p id="modalMessage" class="text-sm mb-5" style="color:var(--c-text-4)"></p>
+    <div id="modalInputWrap" class="mb-5 hidden">
+      <input id="modalInput" class="w-full" placeholder="" onkeydown="if(event.key==='Enter')closeModal(true)">
+    </div>
+    <div class="flex justify-end gap-2.5">
+      <button id="modalCancel" onclick="closeModal(false)" class="px-4 py-2 text-sm rounded-lg cursor-pointer transition-colors" style="border:1px solid var(--c-border);color:var(--c-text-3)">取消</button>
+      <button id="modalConfirm" onclick="closeModal(true)" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium rounded-lg cursor-pointer transition-colors">确认</button>
+    </div>
+  </div>
+</div>
 <!-- 移动端顶栏 -->
 <div id="mobileHeader" class="hidden items-center gap-2 px-4 py-3 bg-[#1a1d27] border-b border-[#2d3148] flex-shrink-0 md:hidden">
   <button onclick="toggleSidebar()" class="text-slate-400 hover:text-indigo-400 p-1 cursor-pointer"><svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/></svg></button>
@@ -131,17 +153,17 @@
     <div class="page active" id="page-accounts">
       <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5 mb-4">
         <h2 class="text-sm font-semibold text-slate-300 mb-4">添加账号</h2>
-        <div class="mb-3"><label class="block text-xs text-slate-500 mb-1">别名（可选）</label><input id="addAlias" placeholder="如：账号1" class="w-full bg-[#0f1117] border border-[#2d3148] rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"></div>
-        <div class="mb-3"><label class="block text-xs text-slate-500 mb-1">粘贴 cURL 命令（自动解析凭证）</label><textarea id="addCurl" placeholder="curl 'https://aistudio.xiaomimimo.com/...'" class="w-full bg-[#0f1117] border border-[#2d3148] rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 resize-y min-h-[72px]"></textarea></div>
+        <div class="mb-3"><label class="block text-xs text-slate-500 mb-1.5">别名（可选）</label><input id="addAlias" placeholder="如：账号1"></div>
+        <div class="mb-3"><label class="block text-xs text-slate-500 mb-1.5">粘贴 cURL 命令（自动解析凭证）</label><textarea id="addCurl" placeholder="curl 'https://aistudio.xiaomimimo.com/...'" class="resize-y"></textarea></div>
         <div class="flex flex-wrap items-center gap-3 mt-3">
           <button onclick="addAccount()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer">添加账号</button>
           <span class="text-xs text-slate-600">或直接填写：</span>
           <button onclick="toggleManual()" class="px-3 py-1.5 border border-[#2d3148] hover:border-indigo-500 text-slate-400 hover:text-indigo-400 text-xs rounded-lg transition-colors cursor-pointer">手动填写</button>
         </div>
         <div id="manualForm" class="hidden mt-4 space-y-3">
-          <div><label class="block text-xs text-slate-500 mb-1">serviceToken</label><input id="mST" placeholder="serviceToken" class="w-full bg-[#0f1117] border border-[#2d3148] rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"></div>
-          <div><label class="block text-xs text-slate-500 mb-1">userId</label><input id="mUID" placeholder="userId" class="w-full bg-[#0f1117] border border-[#2d3148] rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"></div>
-          <div><label class="block text-xs text-slate-500 mb-1">xiaomichatbot_ph</label><input id="mPH" placeholder="xiaomichatbot_ph" class="w-full bg-[#0f1117] border border-[#2d3148] rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"></div>
+          <div><label class="block text-xs text-slate-500 mb-1.5">serviceToken</label><input id="mST" placeholder="serviceToken"></div>
+          <div><label class="block text-xs text-slate-500 mb-1.5">userId</label><input id="mUID" placeholder="userId"></div>
+          <div><label class="block text-xs text-slate-500 mb-1.5">xiaomichatbot_ph</label><input id="mPH" placeholder="xiaomichatbot_ph"></div>
           <button onclick="addAccountManual()" class="px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer">添加</button>
         </div>
       </div>
@@ -189,8 +211,8 @@
     <div class="page" id="page-logs">
       <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5">
         <div class="flex flex-wrap items-center gap-3 mb-4">
-          <select id="logStatus" onchange="loadLogs(1)" class="bg-[#0f1117] border border-[#2d3148] rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500 w-28"><option value="">全部状态</option><option value="success">成功</option><option value="error">失败</option></select>
-          <select id="logEndpoint" onchange="loadLogs(1)" class="bg-[#0f1117] border border-[#2d3148] rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500 w-28"><option value="">全部端点</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select>
+          <select id="logStatus" onchange="loadLogs(1)" class="w-28 text-xs"><option value="">全部状态</option><option value="success">成功</option><option value="error">失败</option></select>
+          <select id="logEndpoint" onchange="loadLogs(1)" class="w-28 text-xs"><option value="">全部端点</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select>
           <button onclick="loadLogs(1)" class="px-3 py-1.5 border border-[#2d3148] hover:border-indigo-500 text-slate-400 hover:text-indigo-400 text-xs rounded-lg transition-colors cursor-pointer">刷新</button>
         </div>
         <div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-xs text-slate-500 border-b border-[#2d3148]"><th class="pb-2 pr-4 font-medium">时间</th><th class="pb-2 pr-4 font-medium">端点</th><th class="pb-2 pr-4 font-medium">模型</th><th class="pb-2 pr-4 font-medium">输入 Token</th><th class="pb-2 pr-4 font-medium">输出 Token</th><th class="pb-2 pr-4 font-medium">耗时</th><th class="pb-2 font-medium">状态</th></tr></thead><tbody id="logTable" class="divide-y divide-[#2d3148]"></tbody></table></div>
@@ -224,14 +246,14 @@
       <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5 mb-4">
         <h2 class="text-sm font-semibold text-slate-300 mb-4">运行配置</h2>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div><label class="block text-xs text-slate-500 mb-1">端口 (需重启生效)</label><input id="cfgPort" type="number" disabled class="opacity-60 cursor-not-allowed"></div>
-          <div><label class="block text-xs text-slate-500 mb-1">单账号最大并发</label><input id="cfgMaxConcurrent" type="number" min="1"></div>
-          <div><label class="block text-xs text-slate-500 mb-1">最大回放消息数</label><input id="cfgMaxReplay" type="number" min="1"></div>
-          <div><label class="block text-xs text-slate-500 mb-1">最大查询字符数</label><input id="cfgMaxQuery" type="number" min="100"></div>
-          <div><label class="block text-xs text-slate-500 mb-1">上下文重置阈值 (tokens)</label><input id="cfgContextReset" type="number" min="1000"></div>
-          <div><label class="block text-xs text-slate-500 mb-1">会话 TTL (天)</label><input id="cfgSessionTtl" type="number" min="1"></div>
-          <div><label class="block text-xs text-slate-500 mb-1">Think 模式</label><select id="cfgThinkMode"><option value="passthrough">passthrough (透传)</option><option value="strip">strip (移除)</option><option value="separate">separate (分离)</option></select></div>
-          <div><label class="block text-xs text-slate-500 mb-1">会话隔离模式</label><select id="cfgSessionIsolation"><option value="auto">auto (自动隔离)</option><option value="manual">manual (手动)</option><option value="per-request">per-request (每请求)</option></select></div>
+          <div><label class="block text-xs text-slate-500 mb-1.5">端口 (需重启生效)</label><input id="cfgPort" type="number" disabled class="opacity-60 cursor-not-allowed"></div>
+          <div><label class="block text-xs text-slate-500 mb-1.5">单账号最大并发</label><input id="cfgMaxConcurrent" type="number" min="1"></div>
+          <div><label class="block text-xs text-slate-500 mb-1.5">最大回放消息数</label><input id="cfgMaxReplay" type="number" min="1"></div>
+          <div><label class="block text-xs text-slate-500 mb-1.5">最大查询字符数</label><input id="cfgMaxQuery" type="number" min="100"></div>
+          <div><label class="block text-xs text-slate-500 mb-1.5">上下文重置阈值 (tokens)</label><input id="cfgContextReset" type="number" min="1000"></div>
+          <div><label class="block text-xs text-slate-500 mb-1.5">会话 TTL (天)</label><input id="cfgSessionTtl" type="number" min="1"></div>
+          <div><label class="block text-xs text-slate-500 mb-1.5">Think 模式</label><select id="cfgThinkMode"><option value="passthrough">passthrough (透传)</option><option value="strip">strip (移除)</option><option value="separate">separate (分离)</option></select></div>
+          <div><label class="block text-xs text-slate-500 mb-1.5">会话隔离模式</label><select id="cfgSessionIsolation"><option value="auto">auto (自动隔离)</option><option value="manual">manual (手动)</option><option value="per-request">per-request (每请求)</option></select></div>
         </div>
         <div class="flex flex-wrap items-center gap-3 mt-4">
           <button onclick="saveSettings()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer">保存配置</button>
@@ -257,6 +279,59 @@ function updateThemeBtns(){const isLight=document.documentElement.dataset.theme=
 
 let ADMIN_KEY = localStorage.getItem('adminKey') || '';
 
+let _modalResolve = null;
+function showModal({ title, message, type = 'confirm', placeholder = '', defaultValue = '', confirmText = '确认', cancelText = '取消', dangerous = false } = {}) {
+  return new Promise((resolve) => {
+    _modalResolve = resolve;
+    document.getElementById('modalTitle').textContent = title || '';
+    document.getElementById('modalMessage').textContent = message || '';
+    const inputWrap = document.getElementById('modalInputWrap');
+    const input = document.getElementById('modalInput');
+    const confirmBtn = document.getElementById('modalConfirm');
+    const cancelBtn = document.getElementById('modalCancel');
+    if (type === 'prompt') {
+      inputWrap.classList.remove('hidden');
+      input.value = defaultValue;
+      input.placeholder = placeholder;
+      input.type = 'text';
+      setTimeout(() => input.focus(), 100);
+    } else if (type === 'password') {
+      inputWrap.classList.remove('hidden');
+      input.value = defaultValue;
+      input.placeholder = placeholder;
+      input.type = 'password';
+      setTimeout(() => input.focus(), 100);
+    } else {
+      inputWrap.classList.add('hidden');
+    }
+    confirmBtn.textContent = confirmText;
+    cancelBtn.textContent = cancelText;
+    if (dangerous) {
+      confirmBtn.className = 'px-4 py-2 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-lg cursor-pointer transition-colors';
+    } else {
+      confirmBtn.className = 'px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium rounded-lg cursor-pointer transition-colors';
+    }
+    const overlay = document.getElementById('modalOverlay');
+    overlay.classList.remove('hidden');
+    overlay.style.display = 'flex';
+  });
+}
+function closeModal(confirmed) {
+  const overlay = document.getElementById('modalOverlay');
+  overlay.classList.add('hidden');
+  overlay.style.display = 'none';
+  if (_modalResolve) {
+    const input = document.getElementById('modalInput');
+    const inputWrap = document.getElementById('modalInputWrap');
+    if (confirmed) {
+      _modalResolve(inputWrap.classList.contains('hidden') ? true : input.value);
+    } else {
+      _modalResolve(null);
+    }
+    _modalResolve = null;
+  }
+}
+
 async function verifyAdminKey(key) {
   try {
     const r = await fetch('/admin/stats', { headers: { 'X-Admin-Key': key } });
@@ -265,15 +340,15 @@ async function verifyAdminKey(key) {
 }
 
 async function promptAdminKey(msg) {
-  const key = prompt(msg || '请输入 Admin Key:');
+  const key = await showModal({ title: 'Admin Key', message: msg || '请输入 Admin Key', type: 'password', placeholder: '请输入 Admin Key' });
   if (key === null) return false;
-  if (!key) return promptAdminKey('Admin Key 不能为空，请重新输入:');
+  if (!key) return promptAdminKey('Admin Key 不能为空，请重新输入');
   if (await verifyAdminKey(key)) {
     ADMIN_KEY = key;
     localStorage.setItem('adminKey', key);
     return true;
   }
-  return promptAdminKey('Admin Key 错误，请重新输入:');
+  return promptAdminKey('Admin Key 错误，请重新输入');
 }
 
 async function ensureAuth() {
@@ -283,10 +358,22 @@ async function ensureAuth() {
   await promptAdminKey();
 }
 
-function resetAdminKey() {
-  promptAdminKey('请输入新的 Admin Key:').then((ok) => {
-    if (ok) { toast('Admin Key 已更新'); loadAccounts(); }
-  });
+async function resetAdminKey() {
+  const newKey = await showModal({ title: '重设 Admin Key', message: '请输入新的 Admin Key', type: 'password', placeholder: '新 Admin Key' });
+  if (newKey === null || !newKey.trim()) return;
+  const confirm = await showModal({ title: '确认修改', message: '确定要将 Admin Key 修改为新值吗？修改后需使用新 Key 登录。' });
+  if (!confirm) return;
+  try {
+    const res = await fetch('/admin/admin-key', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-Admin-Key': ADMIN_KEY }, body: JSON.stringify({ newKey: newKey.trim() }) });
+    if (res.ok) {
+      ADMIN_KEY = newKey.trim();
+      localStorage.setItem('adminKey', ADMIN_KEY);
+      toast('Admin Key 已更新');
+    } else {
+      const data = await res.json();
+      toast(data.error || '更新失败', false);
+    }
+  } catch (e) { toast('更新失败: ' + e, false); }
 }
 
 const api = (path, opts={}) => fetch(path, {...opts, headers:{'Content-Type':'application/json','X-Admin-Key':ADMIN_KEY,...(opts.headers||{})}, body:opts.body?JSON.stringify(opts.body):undefined}).then(r => {
@@ -301,10 +388,10 @@ async function addAccount(){const curl=document.getElementById('addCurl').value.
 function toggleManual(){const f=document.getElementById('manualForm');f.classList.toggle('hidden');}
 async function addAccountManual(){const body={service_token:document.getElementById('mST').value.trim(),user_id:document.getElementById('mUID').value.trim(),ph_token:document.getElementById('mPH').value.trim(),alias:document.getElementById('addAlias').value.trim()};if(!body.service_token){toast('serviceToken不能为空',false);return;}const res=await api('/admin/accounts',{method:'POST',body});res.api_key?toast('添加成功: '+res.api_key):toast(res.error||'失败',false);if(res.api_key)loadAccounts();}
 function copyKey(key){navigator.clipboard.writeText(key).then(()=>toast('已复制 API Key'));}
-function editAccount(id,alias){const newAlias=prompt('修改别名：',alias);if(newAlias===null)return;api('/admin/accounts/'+id,{method:'PATCH',body:{alias:newAlias}}).then(r=>{r.id?toast('别名已更新'):toast(r.error||'更新失败',false);loadAccounts();});}
+function editAccount(id,alias){showModal({title:'修改别名',message:'请输入新的别名',type:'prompt',defaultValue:alias,placeholder:'别名'}).then(newAlias=>{if(newAlias===null)return;api('/admin/accounts/'+id,{method:'PATCH',body:{alias:newAlias}}).then(r=>{r.id?toast('别名已更新'):toast(r.error||'更新失败',false);loadAccounts();});});}
 async function testAccount(id){toast('测试中...');const res=await api('/admin/accounts/test',{method:'POST',body:{id}});res.success?toast('有效: '+res.response.slice(0,80)):toast('无效: '+res.error,false);}
 async function toggleAccount(id,cur){await api('/admin/accounts/'+id,{method:'PATCH',body:{is_active:cur?0:1}});loadAccounts();}
-async function removeAccount(id){if(!confirm('确认删除？'))return;await api('/admin/accounts/'+id,{method:'DELETE'});toast('已删除');loadAccounts();}
+async function removeAccount(id){const ok=await showModal({title:'删除账号',message:'确认删除此账号？删除后不可恢复。',dangerous:true,confirmText:'删除'});if(!ok)return;await api('/admin/accounts/'+id,{method:'DELETE'});toast('已删除');loadAccounts();}
 async function loadMonitor(){const s=await api('/admin/stats');const accs=s.accounts||[];const maxConcurrent=s.maxConcurrent||5;const totalActive=accs.reduce((x,a)=>x+a.active_requests,0);const totalReqs=accs.reduce((x,a)=>x+a.total_requests,0);document.getElementById('monitorStats').innerHTML=`<div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><div class="text-2xl font-bold text-slate-100">${accs.filter(a=>a.is_active).length}</div><div class="text-xs text-slate-500 mt-1">活跃账号</div></div><div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><div class="text-2xl font-bold text-indigo-400">${totalActive}</div><div class="text-xs text-slate-500 mt-1">当前并发</div></div><div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><div class="text-2xl font-bold text-emerald-400">${totalReqs}</div><div class="text-xs text-slate-500 mt-1">总请求数</div></div>`;document.getElementById('monitorTable').innerHTML=accs.map(a=>{const percent=Math.round((a.active_requests/maxConcurrent)*100);const barColor=percent>80?'bg-red-500':percent>50?'bg-yellow-500':'bg-emerald-500';return `<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4">${a.alias||'-'}</td><td class="py-2.5 pr-4"><code class="text-xs text-slate-400 font-mono">${(a.user_id||'').slice(0,8)||'-'}</code></td><td class="py-2.5 pr-4 text-slate-400">${a.active_requests}/${maxConcurrent}</td><td class="py-2.5 pr-4"><div class="flex items-center gap-2"><div class="w-24 h-2 bg-slate-800 rounded-full overflow-hidden"><div class="${barColor} h-full transition-all" style="width:${percent}%"></div></div><span class="text-xs text-slate-500">${percent}%</span></div></td><td class="py-2.5"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${a.is_active?'bg-emerald-900/50 text-emerald-400':'bg-red-900/50 text-red-400'}">${a.is_active?'启用':'禁用'}</span></td></tr>`;}).join('');}
 let tokenChart=null;
 let statsApiKeyData=null;
@@ -313,16 +400,16 @@ function switchStatsTab(tab){if(tab==='account'){document.getElementById('statsT
 let logPage=1;
 async function loadLogs(page=1){logPage=page;const status=document.getElementById('logStatus').value;const endpoint=document.getElementById('logEndpoint').value;let url=`/admin/logs?page=${page}&limit=50`;if(status)url+=`&status=${status}`;if(endpoint)url+=`&endpoint=${endpoint}`;const d=await api(url);document.getElementById('logTable').innerHTML=(d.logs||[]).map(l=>`<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4 text-xs text-slate-500 font-mono whitespace-nowrap">${l.created_at||''}</td><td class="py-2.5 pr-4"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900/50 text-indigo-400">${l.endpoint}</span></td><td class="py-2.5 pr-4 text-xs text-slate-400">${l.model||'-'}</td><td class="py-2.5 pr-4 text-xs text-indigo-400">${l.prompt_tokens??'-'}</td><td class="py-2.5 pr-4 text-xs text-emerald-400">${l.completion_tokens??'-'}</td><td class="py-2.5 pr-4 text-xs text-slate-400">${l.duration_ms??'-'}ms</td><td class="py-2.5"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${l.status==='success'?'bg-emerald-900/50 text-emerald-400':'bg-red-900/50 text-red-400'}">${l.status==='success'?'成功':'失败'}</span>${l.error?`<span class="text-red-400 text-xs ml-1">${l.error.slice(0,40)}</span>`:''}</td></tr>`).join('');const totalPages=Math.ceil((d.total||0)/50);const pg=document.getElementById('logPagination');pg.innerHTML=Array.from({length:Math.min(totalPages,10)},(_,i)=>`<button class="px-2.5 py-1 text-xs rounded-lg border transition-colors cursor-pointer ${i+1===page?'bg-indigo-500 border-indigo-500 text-white':'border-[#2d3148] text-slate-400 hover:border-indigo-500 hover:text-indigo-400'}" onclick="loadLogs(${i+1})">${i+1}</button>`).join('');}
 async function loadSessions(){const data=await api('/admin/sessions');document.getElementById('sessionTable').innerHTML=(data||[]).map(s=>`<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4 text-xs text-slate-500 font-mono">${s.id.slice(0,16)}...</td><td class="py-2.5 pr-4 text-xs text-slate-500 font-mono">${s.account_id.slice(0,12)}...</td><td class="py-2.5 pr-4 text-xs text-slate-400">${s.client_session_id}</td><td class="py-2.5 pr-4 text-xs text-indigo-400">${(s.cumulative_prompt_tokens||0).toLocaleString()}</td><td class="py-2.5 pr-4 text-xs text-slate-500">${s.last_used_at||''}</td><td class="py-2.5"><button class="px-2.5 py-1 bg-red-900/40 hover:bg-red-800/60 text-red-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="deleteSession('${s.id}')">删除</button></td></tr>`).join('');}
-async function deleteSession(id){if(!confirm('确认删除会话？'))return;await api('/admin/sessions/'+id,{method:'DELETE'});toast('已删除');loadSessions();}
+async function deleteSession(id){const ok=await showModal({title:'删除会话',message:'确认删除此会话？',dangerous:true,confirmText:'删除'});if(!ok)return;await api('/admin/sessions/'+id,{method:'DELETE'});toast('已删除');loadSessions();}
 
 // API Keys Management
 async function loadApiKeys(){const data=await api('/admin/api-keys');const tbody=document.getElementById('apiKeyTable');if(!data||!data.keys||data.keys.length===0){tbody.innerHTML='<tr><td colspan="6" class="py-8 text-center text-slate-500 text-sm">暂无 API 密钥，点击右上角创建</td></tr>';return;}tbody.innerHTML=data.keys.map(k=>{const masked=k.key.slice(0,7)+'****...****'+k.key.slice(-4);return `<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4">${k.name||'-'}</td><td class="py-2.5 pr-4"><div class="flex items-center gap-1.5"><code class="text-xs font-mono key-display" data-key="${k.key}" data-masked="${masked}">${masked}</code><button onclick="toggleKeyVisibility(this)" title="显示/隐藏" class="text-slate-500 hover:text-indigo-400 transition-colors cursor-pointer"><svg xmlns='http://www.w3.org/2000/svg' class='w-3.5 h-3.5' fill='none' viewBox='0 0 24 24' stroke='currentColor' stroke-width='2'><path d='M15 12a3 3 0 11-6 0 3 3 0 016 0z'></path><path d='M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z'></path></svg></button><button onclick="copyApiKey(this)" title="复制" class="text-slate-500 hover:text-indigo-400 transition-colors cursor-pointer"><svg xmlns='http://www.w3.org/2000/svg' class='w-3.5 h-3.5' fill='none' viewBox='0 0 24 24' stroke='currentColor' stroke-width='2'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1'></path></svg></button></div></td><td class="py-2.5 pr-4"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${k.is_active?'bg-emerald-900/50 text-emerald-400':'bg-red-900/50 text-red-400'}">${k.is_active?'启用':'禁用'}</span></td><td class="py-2.5 pr-4 text-slate-400">${k.request_count||0}</td><td class="py-2.5 pr-4 text-xs text-slate-500">${k.last_used_at?new Date(k.last_used_at).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'-'}</td><td class="py-2.5"><div class="flex gap-1.5"><button class="px-2.5 py-1 border border-[#2d3148] hover:border-indigo-500 text-slate-400 hover:text-indigo-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="editApiKey('${k.id}','${k.name||''}')">编辑</button><button class="px-2.5 py-1 border border-[#2d3148] hover:border-indigo-500 text-slate-400 hover:text-indigo-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="toggleApiKeyStatus('${k.id}',${k.is_active})">${k.is_active?'禁用':'启用'}</button><button class="px-2.5 py-1 bg-red-900/40 hover:bg-red-800/60 text-red-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="deleteApiKey('${k.id}')">删除</button></div></td></tr>`;}).join('');}
-async function createApiKey(){const name=prompt('输入密钥名称（可选）：');const res=await api('/admin/api-keys',{method:'POST',body:{name:name||undefined}});if(res.key){toast('密钥创建成功');loadApiKeys();}else{toast(res.error||'创建失败',false);}}
+async function createApiKey(){const name=await showModal({title:'创建 API 密钥',message:'输入密钥名称（可选）',type:'prompt',placeholder:'密钥名称'});if(name===null)return;const res=await api('/admin/api-keys',{method:'POST',body:{name:name||undefined}});if(res.key){toast('密钥创建成功');loadApiKeys();}else{toast(res.error||'创建失败',false);}}
 function toggleKeyVisibility(btn){const code=btn.closest('td').querySelector('.key-display');const fullKey=code.dataset.key;const masked=code.dataset.masked;if(code.textContent===masked){code.textContent=fullKey;code.style.color='var(--c-text)';}else{code.textContent=masked;code.style.color='';}}
 function copyApiKey(btn){const code=btn.closest('td').querySelector('.key-display');const key=code.dataset.key;navigator.clipboard.writeText(key).then(()=>toast('已复制 API 密钥'));}
-async function editApiKey(id,name){const newName=prompt('修改密钥名称：',name);if(newName===null)return;const res=await api('/admin/api-keys/'+id,{method:'PATCH',body:{name:newName}});res.message?toast('名称已更新'):toast(res.error||'更新失败',false);loadApiKeys();}
+async function editApiKey(id,name){const newName=await showModal({title:'修改密钥名称',message:'请输入新的密钥名称',type:'prompt',defaultValue:name,placeholder:'密钥名称'});if(newName===null)return;const res=await api('/admin/api-keys/'+id,{method:'PATCH',body:{name:newName}});res.message?toast('名称已更新'):toast(res.error||'更新失败',false);loadApiKeys();}
 async function toggleApiKeyStatus(id,cur){await api('/admin/api-keys/'+id,{method:'PATCH',body:{is_active:cur?0:1}});loadApiKeys();}
-async function deleteApiKey(id){if(!confirm('确认删除此 API 密钥？删除后使用该密钥的客户端将无法访问。'))return;await api('/admin/api-keys/'+id,{method:'DELETE'});toast('已删除');loadApiKeys();}
+async function deleteApiKey(id){const ok=await showModal({title:'删除 API 密钥',message:'确认删除此 API 密钥？删除后使用该密钥的客户端将无法访问。',dangerous:true,confirmText:'删除'});if(!ok)return;await api('/admin/api-keys/'+id,{method:'DELETE'});toast('已删除');loadApiKeys();}
 
 ensureAuth().then(() => loadAccounts());
 
