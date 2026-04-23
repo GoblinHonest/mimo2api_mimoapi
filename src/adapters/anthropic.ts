@@ -136,6 +136,11 @@ function processThinkContent(text: string): { thinkContent: string; mainContent:
   return { thinkContent: '', mainContent: text };
 }
 
+// 处理引用格式：将 (citation:N) 转换为可点击的链接
+function processCitations(text: string): string {
+  return text.replace(/\(citation:(\d+)\)/g, '<sup><a href="#citation-$1" onclick="window.scrollToCitation && window.scrollToCitation($1);return false;">[$1]</a></sup>');
+}
+
 export function registerAnthropic(app: Hono) {
   app.post('/v1/messages', async (c) => {
     console.log('\n[REQ] ========== New Anthropic Request ==========');
@@ -331,13 +336,13 @@ export function registerAnthropic(app: Hono) {
                     const fcIdx = [fc1, fc2, fc3, fc4].filter(i => i !== -1).sort((a, b) => a - b)[0] ?? -1;
                     if (fcIdx !== -1) {
                       const before = pendingText.slice(0, fcIdx);
-                      if (before) await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx, delta: { type: 'text_delta', text: before } });
+                      if (before) await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx, delta: { type: 'text_delta', text: processCitations(before) } });
                       toolCallBuf = pendingText.slice(fcIdx);
                       pendingText = '';
                     } else {
                       const safeLen = Math.max(0, pendingText.length - 20);
                       if (safeLen > 0) {
-                        await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx, delta: { type: 'text_delta', text: pendingText.slice(0, safeLen) } });
+                        await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx, delta: { type: 'text_delta', text: processCitations(pendingText.slice(0, safeLen)) } });
                         pendingText = pendingText.slice(safeLen);
                       }
                     }
@@ -363,7 +368,7 @@ export function registerAnthropic(app: Hono) {
                   const idx2 = config.thinkMode === 'separate' ? 1 : 0;
                   if (toolCallBuf !== null) toolCallBuf += pendingText;
                   else if (hasToolCallMarker(pendingText)) toolCallBuf = pendingText;
-                  else await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx2, delta: { type: 'text_delta', text: pendingText } });
+                  else await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx2, delta: { type: 'text_delta', text: processCitations(pendingText) } });
                   pendingText = '';
                 }
                 const lastIdx = config.thinkMode === 'separate' && pastThink ? 1 : 0;
@@ -388,9 +393,9 @@ export function registerAnthropic(app: Hono) {
                       toolCallBuf.indexOf('<function_calls>') !== -1 ? toolCallBuf.indexOf('<function_calls>') : Infinity
                     );
                     if (toolCallStart !== Infinity && toolCallStart > 0) {
-                      await sendEvent('content_block_delta', { type: 'content_block_delta', index: lastIdx, delta: { type: 'text_delta', text: toolCallBuf.slice(0, toolCallStart) } });
+                      await sendEvent('content_block_delta', { type: 'content_block_delta', index: lastIdx, delta: { type: 'text_delta', text: processCitations(toolCallBuf.slice(0, toolCallStart)) } });
                     } else {
-                      await sendEvent('content_block_delta', { type: 'content_block_delta', index: lastIdx, delta: { type: 'text_delta', text: toolCallBuf } });
+                      await sendEvent('content_block_delta', { type: 'content_block_delta', index: lastIdx, delta: { type: 'text_delta', text: processCitations(toolCallBuf) } });
                     }
                   }
                 }
@@ -437,9 +442,9 @@ export function registerAnthropic(app: Hono) {
       if (config.thinkMode === 'separate') {
         const { thinkContent, mainContent } = processThinkContent(fullText);
         if (thinkContent) content.push({ type: 'thinking', thinking: thinkContent });
-        content.push({ type: 'text', text: mainContent });
+        content.push({ type: 'text', text: processCitations(mainContent) });
       } else {
-        content.push({ type: 'text', text: fullText });
+        content.push({ type: 'text', text: processCitations(fullText) });
       }
       let stopReason = 'end_turn';
       if (hasToolCallMarker(fullText)) {
