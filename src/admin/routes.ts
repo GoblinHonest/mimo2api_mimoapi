@@ -191,7 +191,7 @@ export function registerAdmin(app: Hono) {
 
   admin.post('/api-keys', async (c) => {
     const body = await c.req.json();
-    const apiKey = createApiKey(body.name);
+    const apiKey = createApiKey(body.name, body.key);
     return c.json(apiKey, 201);
   });
 
