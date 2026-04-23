@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import { v4 as uuidv4 } from 'uuid';
 import { decrementActive } from '../accounts.js';
-import { callMimo, MimoUsage } from '../mimo/client.js';
+import { callMimo, MimoUsage, fetchBotConfig, getChatModels } from '../mimo/client.js';
 import { serializeMessages, ChatMessage } from '../mimo/serialize.js';
 import { config } from '../config.js';
 import { buildToolSystemPrompt, ToolDefinition } from '../tools/prompt.js';
@@ -14,14 +14,51 @@ import { getOrCreateSession, updateSessionTokens } from '../mimo/session.js';
 import { extractApiKey, authenticateRequest, acquireAccountForRequest, logApiRequest, handleAccountError } from '../middleware/request-handler.js';
 import { generateClientSessionId } from '../mimo/session-marker.js';
 
+// 静态 fallback（网络失败时使用）
 const MODEL_MAP: Record<string, string> = {
+  'mimo-v2.5-pro': 'mimo-v2.5-pro',
+  'mimo-v2.5': 'mimo-v2.5',
+  'mimo-v2.1-pro': 'mimo-v2.1-pro',
+  'mimo-v2.1-omni': 'mimo-v2.1-omni',
+  'mimo-v2.1-pro-preview': 'mimo-v2.1-pro-preview',
+  'mimo-v2.1-omni-preview': 'mimo-v2.1-omni-preview',
   'mimo-v2-pro': 'mimo-v2-pro',
-  'mimo-v2-flash-studio': 'mimo-v2-flash-studio',
   'mimo-v2-omni': 'mimo-v2-omni',
+  'mimo-v2-flash-studio': 'mimo-v2-flash-studio',
+  'clawm-alpha': 'clawm-alpha',
+  'clawl-alpha': 'clawl-alpha',
 };
 
+// 动态模型解析（支持 redirectTo）
+function resolveModelDynamic(model: string): string {
+  if (!cachedModels) return MODEL_MAP[model] ?? 'mimo-v2-pro';
+  const entry = cachedModels.find(m => m.model === model);
+  if (entry) {
+    return entry.redirectTo ?? entry.model;
+  }
+  return 'mimo-v2-pro'; // 未知模型默认
+}
+
+// 缓存模型配置
+let cachedModels: Array<{ model: string; redirectTo?: string }> | null = null;
+
+async function getResolvedModel(model: string): Promise<string> {
+  if (!cachedModels) {
+    try {
+      const botConfig = await fetchBotConfig();
+      cachedModels = botConfig.modelConfigListNg
+        .filter(m => m.pageType === 'chat')
+        .map(m => ({ model: m.model, redirectTo: m.redirectTo }));
+    } catch (err) {
+      console.error('[MODEL] Failed to fetch bot config:', err);
+      cachedModels = null;
+    }
+  }
+  return resolveModelDynamic(model);
+}
+
 function resolveModel(model: string): string {
-  return MODEL_MAP[model] ?? 'mimo-v2-pro';
+  return resolveModelDynamic(model);
 }
 
 function stripThink(text: string): string {
@@ -116,9 +153,19 @@ function logRequest(data: {
 }
 
 export function registerOpenAI(app: Hono) {
-  app.get('/v1/models', (c) => {
-    const models = Object.keys(MODEL_MAP).map(id => ({ id, object: 'model', created: 1700000000, owned_by: 'mimo' }));
-    return c.json({ object: 'list', data: models });
+  app.get('/v1/models', async (c) => {
+    try {
+      const botConfig = await fetchBotConfig();
+      const chatModels = botConfig.modelConfigListNg
+        .filter(m => m.pageType === 'chat')
+        .map(m => ({ id: m.model, object: 'model', created: 1700000000, owned_by: 'mimo' }));
+      return c.json({ object: 'list', data: chatModels });
+    } catch (err) {
+      console.error('[MODEL] Failed to fetch models from bot config:', err);
+      // Fallback to cached models
+      const models = Object.keys(MODEL_MAP).map(id => ({ id, object: 'model', created: 1700000000, owned_by: 'mimo' }));
+      return c.json({ object: 'list', data: models });
+    }
   });
 
   app.post('/v1/chat/completions', async (c) => {
@@ -150,7 +197,7 @@ export function registerOpenAI(app: Hono) {
     const tools: ToolDefinition[] | undefined = body.tools?.length ? body.tools : undefined;
     const isStream: boolean = body.stream ?? false;
     const enableThinking: boolean = !!body.reasoning_effort;
-    const mimoModel = resolveModel(body.model ?? '');
+    const mimoModel = await getResolvedModel(body.model ?? '');
 
     let messages = rawMessages;
     if (tools) {

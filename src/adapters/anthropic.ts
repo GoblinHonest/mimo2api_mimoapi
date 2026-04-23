@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import { v4 as uuidv4 } from 'uuid';
 import { decrementActive } from '../accounts.js';
-import { callMimo, MimoUsage } from '../mimo/client.js';
+import { callMimo, MimoUsage, fetchBotConfig } from '../mimo/client.js';
 import { serializeMessages, ChatMessage } from '../mimo/serialize.js';
 import { config } from '../config.js';
 import { buildToolSystemPrompt, ToolDefinition } from '../tools/prompt.js';
@@ -14,14 +14,51 @@ import { getOrCreateSession, updateSessionTokens } from '../mimo/session.js';
 import { extractApiKey, authenticateRequest, acquireAccountForRequest, logApiRequest, handleAccountError } from '../middleware/request-handler.js';
 import { generateClientSessionId } from '../mimo/session-marker.js';
 
+// 静态 fallback
 const MODEL_MAP: Record<string, string> = {
+  'mimo-v2.5-pro': 'mimo-v2.5-pro',
+  'mimo-v2.5': 'mimo-v2.5',
+  'mimo-v2.1-pro': 'mimo-v2.1-pro',
+  'mimo-v2.1-omni': 'mimo-v2.1-omni',
+  'mimo-v2.1-pro-preview': 'mimo-v2.1-pro-preview',
+  'mimo-v2.1-omni-preview': 'mimo-v2.1-omni-preview',
   'mimo-v2-pro': 'mimo-v2-pro',
-  'mimo-v2-flash-studio': 'mimo-v2-flash-studio',
   'mimo-v2-omni': 'mimo-v2-omni',
+  'mimo-v2-flash-studio': 'mimo-v2-flash-studio',
+  'clawm-alpha': 'clawm-alpha',
+  'clawl-alpha': 'clawl-alpha',
 };
 
+// 缓存模型配置
+let cachedModels: Array<{ model: string; redirectTo?: string }> | null = null;
+
+async function getResolvedModel(model: string): Promise<string> {
+  if (!cachedModels) {
+    try {
+      const botConfig = await fetchBotConfig();
+      cachedModels = botConfig.modelConfigListNg
+        .filter(m => m.pageType === 'chat')
+        .map(m => ({ model: m.model, redirectTo: m.redirectTo }));
+    } catch (err) {
+      console.error('[MODEL] Failed to fetch bot config:', err);
+      cachedModels = null;
+    }
+  }
+  if (!cachedModels) return MODEL_MAP[model] ?? 'mimo-v2-pro';
+  const entry = cachedModels.find(m => m.model === model);
+  if (entry) {
+    return entry.redirectTo ?? entry.model;
+  }
+  return 'mimo-v2-pro';
+}
+
 function resolveModel(model: string): string {
-  return MODEL_MAP[model] ?? 'mimo-v2-pro';
+  if (!cachedModels) return MODEL_MAP[model] ?? 'mimo-v2-pro';
+  const entry = cachedModels.find(m => m.model === model);
+  if (entry) {
+    return entry.redirectTo ?? entry.model;
+  }
+  return 'mimo-v2-pro';
 }
 
 function logRequest(data: {
@@ -123,7 +160,7 @@ export function registerAnthropic(app: Hono) {
     console.log('[ANT] tools:', JSON.stringify(body.tools?.map((t: Record<string,unknown>) => t.name ?? t.function) ?? null));
 
     const medias = await extractImagesAnthropic(account, body);
-    const mimoModel = resolveModel(body.model ?? '');
+    const mimoModel = await getResolvedModel(body.model ?? '');
     const isStream: boolean = body.stream ?? false;
     const enableThinking: boolean = body.thinking?.type === 'enabled';
     const tools: ToolDefinition[] | undefined = body.tools?.length ? body.tools : undefined;

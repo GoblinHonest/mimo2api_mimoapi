@@ -16,6 +16,60 @@ export interface MimoChunk {
 }
 
 const API_URL = 'https://aistudio.xiaomimimo.com/open-apis/bot/chat';
+const CONFIG_URL = 'https://aistudio.xiaomimimo.com/open-apis/bot/config';
+
+export interface BotConfig {
+  modelConfigListNg: Array<{
+    name: string;
+    model: string;
+    pageType: string;
+    redirectTo?: string;
+    isNew?: boolean;
+  }>;
+}
+
+interface BotConfigResponse {
+  code: number;
+  msg: string;
+  data: BotConfig;
+}
+
+let cachedBotConfig: BotConfig | null = null;
+let configCacheTime = 0;
+const CONFIG_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+export async function fetchBotConfig(): Promise<BotConfig> {
+  const now = Date.now();
+  if (cachedBotConfig && (now - configCacheTime) < CONFIG_CACHE_TTL) {
+    return cachedBotConfig;
+  }
+
+  const resp = await fetch(CONFIG_URL, {
+    headers: {
+      'Accept': '*/*',
+      'Content-Type': 'application/json',
+      'Origin': 'https://aistudio.xiaomimimo.com',
+      'Referer': 'https://aistudio.xiaomimimo.com/',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+  });
+
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch bot config: ${resp.status}`);
+  }
+
+  const json = await resp.json() as BotConfigResponse;
+  cachedBotConfig = json.data;
+  configCacheTime = now;
+  return cachedBotConfig;
+}
+
+export function getChatModels(): string[] {
+  if (!cachedBotConfig) return [];
+  return cachedBotConfig.modelConfigListNg
+    .filter(m => m.pageType === 'chat')
+    .map(m => m.model);
+}
 
 export async function* callMimo(
   account: Account,
