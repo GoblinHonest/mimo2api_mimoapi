@@ -14,9 +14,9 @@ export interface ApiKey {
 /**
  * 创建新的 API 密钥
  */
-export function createApiKey(name?: string): ApiKey {
+export function createApiKey(name?: string, customKey?: string): ApiKey {
   const id = uuidv4();
-  const key = 'sk-' + uuidv4().replace(/-/g, '');
+  const key = customKey || 'sk-' + uuidv4().replace(/-/g, '');
   const created_at = new Date().toISOString();
 
   db.prepare(
