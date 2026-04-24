@@ -3,5 +3,6 @@ dist/
 *.db
 *.db-shm
 *.db-wal
+dbdata/
 .env
 .claude

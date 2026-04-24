@@ -14,7 +14,7 @@ COPY tsconfig.json tailwind.config.js ./
 COPY src ./src
 
 # 创建数据目录
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data /app/dbdata
 
 # 环境变量
 ENV PORT=8080

@@ -3,7 +3,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, '..', 'mimo-proxy.db');
+const DB_DIR = path.join(__dirname, '..', 'dbdata');
+import { mkdirSync } from 'fs';
+mkdirSync(DB_DIR, { recursive: true });
+const DB_PATH = path.join(DB_DIR, 'mimo-proxy.db');
 export const db = new Database(DB_PATH);
 
 export function initDb() {

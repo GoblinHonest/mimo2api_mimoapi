@@ -7,7 +7,7 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/app/data
-      - ./mimo-proxy.db:/app/mimo-proxy.db
+      - ./dbdata:/app/dbdata
     env_file:
       - .env
     restart: unless-stopped
