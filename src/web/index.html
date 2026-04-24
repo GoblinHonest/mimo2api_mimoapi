@@ -110,6 +110,10 @@
     <div id="modalInputWrap" class="mb-5 hidden">
       <input id="modalInput" class="w-full" placeholder="" onkeydown="if(event.key==='Enter')closeModal(true)">
     </div>
+    <div id="modalInput2Wrap" class="mb-5 hidden">
+      <label id="modalLabel2" class="block text-xs mb-1" style="color:var(--c-text-4)"></label>
+      <input id="modalInput2" class="w-full" placeholder="" onkeydown="if(event.key==='Enter')closeModal(true)">
+    </div>
     <div class="flex justify-end gap-2.5">
       <button id="modalCancel" onclick="closeModal(false)" class="px-4 py-2 text-sm rounded-lg cursor-pointer transition-colors" style="border:1px solid var(--c-border);color:var(--c-text-3)">取消</button>
       <button id="modalConfirm" onclick="closeModal(true)" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium rounded-lg cursor-pointer transition-colors">确认</button>
@@ -280,13 +284,15 @@ function updateThemeBtns(){const isLight=document.documentElement.dataset.theme=
 let ADMIN_KEY = localStorage.getItem('adminKey') || '';
 
 let _modalResolve = null;
-function showModal({ title, message, type = 'confirm', placeholder = '', defaultValue = '', confirmText = '确认', cancelText = '取消', dangerous = false } = {}) {
+function showModal({ title, message, type = 'confirm', placeholder = '', defaultValue = '', confirmText = '确认', cancelText = '取消', dangerous = false, placeholder2 = '', defaultValue2 = '', label2 = '' } = {}) {
   return new Promise((resolve) => {
     _modalResolve = resolve;
     document.getElementById('modalTitle').textContent = title || '';
     document.getElementById('modalMessage').textContent = message || '';
     const inputWrap = document.getElementById('modalInputWrap');
     const input = document.getElementById('modalInput');
+    const input2Wrap = document.getElementById('modalInput2Wrap');
+    const input2 = document.getElementById('modalInput2');
     const confirmBtn = document.getElementById('modalConfirm');
     const cancelBtn = document.getElementById('modalCancel');
     if (type === 'prompt') {
@@ -303,6 +309,15 @@ function showModal({ title, message, type = 'confirm', placeholder = '', default
       setTimeout(() => input.focus(), 100);
     } else {
       inputWrap.classList.add('hidden');
+    }
+    if (placeholder2 || label2) {
+      input2Wrap.classList.remove('hidden');
+      input2.value = defaultValue2 || '';
+      input2.placeholder = placeholder2;
+      input2.type = 'text';
+      document.getElementById('modalLabel2').textContent = label2 || '';
+    } else {
+      input2Wrap.classList.add('hidden');
     }
     confirmBtn.textContent = confirmText;
     cancelBtn.textContent = cancelText;
@@ -323,8 +338,15 @@ function closeModal(confirmed) {
   if (_modalResolve) {
     const input = document.getElementById('modalInput');
     const inputWrap = document.getElementById('modalInputWrap');
+    const input2 = document.getElementById('modalInput2');
+    const input2Wrap = document.getElementById('modalInput2Wrap');
     if (confirmed) {
-      _modalResolve(inputWrap.classList.contains('hidden') ? true : input.value);
+      const val1 = inputWrap.classList.contains('hidden') ? true : input.value;
+      if (!input2Wrap.classList.contains('hidden')) {
+        _modalResolve([val1, input2.value]);
+      } else {
+        _modalResolve(val1);
+      }
     } else {
       _modalResolve(null);
     }
@@ -404,7 +426,7 @@ async function deleteSession(id){const ok=await showModal({title:'删除会话',
 
 // API Keys Management
 async function loadApiKeys(){const data=await api('/admin/api-keys');const tbody=document.getElementById('apiKeyTable');if(!data||!data.keys||data.keys.length===0){tbody.innerHTML='<tr><td colspan="6" class="py-8 text-center text-slate-500 text-sm">暂无 API 密钥，点击右上角创建</td></tr>';return;}tbody.innerHTML=data.keys.map(k=>{const masked=k.key.slice(0,7)+'****...****'+k.key.slice(-4);return `<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4">${k.name||'-'}</td><td class="py-2.5 pr-4"><div class="flex items-center gap-1.5"><code class="text-xs font-mono key-display" data-key="${k.key}" data-masked="${masked}">${masked}</code><button onclick="toggleKeyVisibility(this)" title="显示/隐藏" class="text-slate-500 hover:text-indigo-400 transition-colors cursor-pointer"><svg xmlns='http://www.w3.org/2000/svg' class='w-3.5 h-3.5' fill='none' viewBox='0 0 24 24' stroke='currentColor' stroke-width='2'><path d='M15 12a3 3 0 11-6 0 3 3 0 016 0z'></path><path d='M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z'></path></svg></button><button onclick="copyApiKey(this)" title="复制" class="text-slate-500 hover:text-indigo-400 transition-colors cursor-pointer"><svg xmlns='http://www.w3.org/2000/svg' class='w-3.5 h-3.5' fill='none' viewBox='0 0 24 24' stroke='currentColor' stroke-width='2'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1'></path></svg></button></div></td><td class="py-2.5 pr-4"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${k.is_active?'bg-emerald-900/50 text-emerald-400':'bg-red-900/50 text-red-400'}">${k.is_active?'启用':'禁用'}</span></td><td class="py-2.5 pr-4 text-slate-400">${k.request_count||0}</td><td class="py-2.5 pr-4 text-xs text-slate-500">${k.last_used_at?new Date(k.last_used_at).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'-'}</td><td class="py-2.5"><div class="flex gap-1.5"><button class="px-2.5 py-1 border border-[#2d3148] hover:border-indigo-500 text-slate-400 hover:text-indigo-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="editApiKey('${k.id}','${k.name||''}')">编辑</button><button class="px-2.5 py-1 border border-[#2d3148] hover:border-indigo-500 text-slate-400 hover:text-indigo-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="toggleApiKeyStatus('${k.id}',${k.is_active})">${k.is_active?'禁用':'启用'}</button><button class="px-2.5 py-1 bg-red-900/40 hover:bg-red-800/60 text-red-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="deleteApiKey('${k.id}')">删除</button></div></td></tr>`;}).join('');}
-async function createApiKey(){const name=await showModal({title:'创建 API 密钥',message:'输入密钥名称（可选）',type:'prompt',placeholder:'密钥名称'});if(name===null)return;const res=await api('/admin/api-keys',{method:'POST',body:{name:name||undefined}});if(res.key){toast('密钥创建成功');loadApiKeys();}else{toast(res.error||'创建失败',false);}}
+async function createApiKey(){const result=await showModal({title:'创建 API 密钥',message:'填写以下信息（均可留空）',type:'prompt',placeholder:'密钥名称（可选）',placeholder2:'自定义密钥，留空自动生成（如 sk-xxx）',label2:'自定义密钥（可选）'});if(result===null)return;const[name,customKey]=result;const trimmedKey=(customKey||'').trim();const body={name:(name||'').trim()||undefined,key:trimmedKey===''?undefined:trimmedKey};const res=await api('/admin/api-keys',{method:'POST',body});if(res.key){toast('密钥创建成功');loadApiKeys();}else{toast(res.error||'创建失败',false);}}
 function toggleKeyVisibility(btn){const code=btn.closest('td').querySelector('.key-display');const fullKey=code.dataset.key;const masked=code.dataset.masked;if(code.textContent===masked){code.textContent=fullKey;code.style.color='var(--c-text)';}else{code.textContent=masked;code.style.color='';}}
 function copyApiKey(btn){const code=btn.closest('td').querySelector('.key-display');const key=code.dataset.key;navigator.clipboard.writeText(key).then(()=>toast('已复制 API 密钥'));}
 async function editApiKey(id,name){const newName=await showModal({title:'修改密钥名称',message:'请输入新的密钥名称',type:'prompt',defaultValue:name,placeholder:'密钥名称'});if(newName===null)return;const res=await api('/admin/api-keys/'+id,{method:'PATCH',body:{name:newName}});res.message?toast('名称已更新'):toast(res.error||'更新失败',false);loadApiKeys();}

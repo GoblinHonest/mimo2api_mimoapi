@@ -145,14 +145,17 @@ export async function* callMimo(
 
     for (const line of lines) {
       const trimmed = line.trim();
+      console.log('[MIMO:RAW]', line);
       if (trimmed.startsWith('event:')) {
         event = trimmed.slice(6).trim();
       } else if (trimmed.startsWith('data:')) {
         try {
           const data = JSON.parse(trimmed.slice(5).trim());
           if (event === 'message') {
+            console.log('[MIMO:DEBUG] Message event data:', JSON.stringify(data).slice(0, 500));
             yield { type: 'text', content: data.content ?? '' };
           } else if (event === 'usage') {
+            console.log('[MIMO:DEBUG] Usage event data:', JSON.stringify(data));
             yield {
               type: 'usage',
               usage: {
@@ -163,12 +166,16 @@ export async function* callMimo(
               },
             };
           } else if (event === 'finish') {
+            console.log('[MIMO:DEBUG] Finish event received');
             yield { type: 'finish' };
           } else if (event === 'dialogId') {
+            console.log('[MIMO:DEBUG] DialogId event:', data.content);
             yield { type: 'dialogId', content: data.content };
+          } else {
+            console.log('[MIMO:DEBUG] Unknown event type:', event, data);
           }
-        } catch {
-          // skip malformed SSE data
+        } catch (e) {
+          console.error('[MIMO:ERROR] Failed to parse SSE data:', trimmed.slice(5).trim(), e);
         }
       }
     }
