@@ -1,13 +1,18 @@
 FROM node:20-alpine
 
-# 安装 better-sqlite3 需要的构建工具
-RUN apk add --no-cache python3 make g++ dumb-init
+# 安装运行时依赖（dumb-init 用于正确处理信号）
+RUN apk add --no-cache dumb-init
 
 WORKDIR /app
 
-# 复制依赖文件
+# 复制依赖清单
 COPY package.json package-lock.json ./
-RUN npm ci && npm cache clean --force
+
+# 安装构建依赖 → 编译 better-sqlite3 → 立即移除构建工具
+RUN apk add --no-cache python3 make g++ && \
+    npm ci --omit=dev && \
+    apk del python3 make g++ && \
+    npm cache clean --force
 
 # 复制源码
 COPY tsconfig.json tailwind.config.js ./
