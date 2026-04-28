@@ -18,6 +18,7 @@
     "better-sqlite3": "^12.8.0",
     "dotenv": "^17.3.1",
     "hono": "^4.12.9",
+    "tsx": "^4.21.0",
     "uuid": "^14.0.0"
   },
   "devDependencies": {
@@ -27,7 +28,6 @@
     "@types/uuid": "^10.0.0",
     "daisyui": "^5.5.19",
     "tailwindcss": "^4.2.2",
-    "tsx": "^4.21.0",
     "typescript": "^6.0.2"
   }
 }
