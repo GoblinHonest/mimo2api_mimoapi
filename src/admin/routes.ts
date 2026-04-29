@@ -32,7 +32,7 @@ export function registerAdmin(app: Hono) {
   // --- Accounts ---
   admin.get('/accounts', (c) => {
     const page = Math.max(1, Number(c.req.query('page') ?? 1));
-    const limit = Math.min(Math.max(1, Number(c.req.query('limit') ?? 20)), 100);
+    const limit = Math.min(Math.max(1, Number(c.req.query('limit') ?? 10)), 100);
     const offset = (page - 1) * limit;
 
     const total = (db.prepare('SELECT COUNT(*) as cnt FROM accounts').get() as { cnt: number }).cnt;
@@ -148,7 +148,7 @@ export function registerAdmin(app: Hono) {
   // --- Stats ---
   admin.get('/stats', (c) => {
     const page = Math.max(1, Number(c.req.query('page') ?? 1));
-    const limit = Math.min(Math.max(1, Number(c.req.query('limit') ?? 20)), 100);
+    const limit = Math.min(Math.max(1, Number(c.req.query('limit') ?? 10)), 100);
     const offset = (page - 1) * limit;
 
     const totalAccounts = (db.prepare('SELECT COUNT(*) as cnt FROM accounts').get() as { cnt: number }).cnt;
@@ -180,7 +180,7 @@ export function registerAdmin(app: Hono) {
 
   admin.get('/stats/api-keys', (c) => {
     const page = Math.max(1, Number(c.req.query('page') ?? 1));
-    const limit = Math.min(Math.max(1, Number(c.req.query('limit') ?? 20)), 100);
+    const limit = Math.min(Math.max(1, Number(c.req.query('limit') ?? 10)), 100);
     const offset = (page - 1) * limit;
 
     const total = (db.prepare('SELECT COUNT(*) as cnt FROM api_keys').get() as { cnt: number }).cnt;
