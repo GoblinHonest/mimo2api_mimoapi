@@ -206,7 +206,7 @@
       <!-- 每日趋势 -->
       <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5 mb-4">
         <h2 class="text-sm font-semibold text-slate-300 mb-4">近 30 天用量趋势</h2>
-        <canvas id="trendChart" height="100"></canvas>
+        <div style="max-height:260px"><canvas id="trendChart"></canvas></div>
       </div>
       <!-- 分布图 -->
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -498,7 +498,7 @@ async function loadStats(){
   const trend=ov.dailyTrend||[];
   destroyChart('trend');
   if(trend.length){
-    charts.trend=new Chart(document.getElementById('trendChart').getContext('2d'),{type:'line',data:{labels:trend.map(d=>d.date.slice(5)),datasets:[{label:'Input Token',data:trend.map(d=>d.input_tokens),borderColor:'#818cf8',backgroundColor:'rgba(129,140,248,.15)',fill:true,tension:.3,pointRadius:2},{label:'Output Token',data:trend.map(d=>d.output_tokens),borderColor:'#34d399',backgroundColor:'rgba(52,211,153,.1)',fill:true,tension:.3,pointRadius:2}]},options:{responsive:true,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:t.text}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+fmtNum(ctx.raw)}}},scales:{x:{ticks:{color:t.text,maxRotation:45},grid:{color:t.grid}},y:{ticks:{color:t.text,callback:v=>fmtNum(v)},grid:{color:t.grid}}}}});
+    charts.trend=new Chart(document.getElementById('trendChart').getContext('2d'),{type:'line',data:{labels:trend.map(d=>d.date.slice(5)),datasets:[{label:'Input Token',data:trend.map(d=>d.input_tokens),borderColor:'#818cf8',backgroundColor:'rgba(129,140,248,.15)',fill:true,tension:.3,pointRadius:2},{label:'Output Token',data:trend.map(d=>d.output_tokens),borderColor:'#34d399',backgroundColor:'rgba(52,211,153,.1)',fill:true,tension:.3,pointRadius:2}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:t.text}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+fmtNum(ctx.raw)}}},scales:{x:{ticks:{color:t.text,maxRotation:45},grid:{color:t.grid}},y:{ticks:{color:t.text,callback:v=>fmtNum(v)},grid:{color:t.grid}}}}});
   }
 
   // 端点分布
