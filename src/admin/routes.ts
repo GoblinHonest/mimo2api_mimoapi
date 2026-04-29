@@ -13,25 +13,8 @@ import { listSessions, deleteSession } from '../mimo/session.js';
 import { db } from '../db.js';
 import { callMimo } from '../mimo/client.js';
 import { v4 as uuidv4 } from 'uuid';
-import { readFileSync, writeFileSync } from 'fs';
-import { resolve } from 'path';
-
-function updateEnvFile(updates: Record<string, string>) {
-  const envPath = resolve(process.cwd(), '.env');
-  let content = '';
-  try { content = readFileSync(envPath, 'utf-8'); } catch {}
-  const lines = content.split('\n');
-  const written = new Set<string>();
-  const result = lines.map(line => {
-    const m = line.match(/^([A-Z_][A-Z0-9_]*)=/);
-    if (m && m[1] in updates) { written.add(m[1]); return `${m[1]}=${updates[m[1]]}`; }
-    return line;
-  });
-  for (const [k, v] of Object.entries(updates)) {
-    if (!written.has(k)) result.push(`${k}=${v}`);
-  }
-  while (result.length > 0 && result[result.length - 1] === '') result.pop();
-  writeFileSync(envPath, result.join('\n') + '\n');
+function saveSetting(key: string, value: string) {
+  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
 }
 
 async function adminAuth(c: Parameters<Parameters<Hono['use']>[1]>[0], next: () => Promise<void>): Promise<void | Response> {
@@ -48,6 +31,11 @@ export function registerAdmin(app: Hono) {
 
   // --- Accounts ---
   admin.get('/accounts', (c) => {
+    const page = Math.max(1, Number(c.req.query('page') ?? 1));
+    const limit = Math.min(Math.max(1, Number(c.req.query('limit') ?? 20)), 100);
+    const offset = (page - 1) * limit;
+
+    const total = (db.prepare('SELECT COUNT(*) as cnt FROM accounts').get() as { cnt: number }).cnt;
     const accounts = db.prepare(`
       SELECT a.id, a.alias, a.user_id, a.service_token, a.ph_token, a.api_key,
              a.is_active, a.active_requests, a.created_at,
@@ -58,8 +46,9 @@ export function registerAdmin(app: Hono) {
       LEFT JOIN request_logs l ON a.id = l.account_id
       GROUP BY a.id
       ORDER BY a.created_at DESC
-    `).all();
-    return c.json(accounts);
+      LIMIT ? OFFSET ?
+    `).all(limit, offset);
+    return c.json({ accounts, total, page, limit });
   });
 
   admin.post('/accounts', async (c) => {
@@ -158,6 +147,11 @@ export function registerAdmin(app: Hono) {
 
   // --- Stats ---
   admin.get('/stats', (c) => {
+    const page = Math.max(1, Number(c.req.query('page') ?? 1));
+    const limit = Math.min(Math.max(1, Number(c.req.query('limit') ?? 20)), 100);
+    const offset = (page - 1) * limit;
+
+    const totalAccounts = (db.prepare('SELECT COUNT(*) as cnt FROM accounts').get() as { cnt: number }).cnt;
     const accounts = db.prepare(`
       SELECT a.id, a.alias, a.api_key, a.is_active, a.active_requests,
              COALESCE(SUM(l.prompt_tokens), 0) as total_prompt_tokens,
@@ -166,11 +160,30 @@ export function registerAdmin(app: Hono) {
       FROM accounts a
       LEFT JOIN request_logs l ON a.id = l.account_id
       GROUP BY a.id
-    `).all();
-    return c.json({ accounts, maxConcurrent: config.maxConcurrentPerAccount });
+      LIMIT ? OFFSET ?
+    `).all(limit, offset);
+
+    // 全量汇总（不受分页影响）
+    const totals = db.prepare(`
+      SELECT COALESCE(SUM(l.prompt_tokens), 0) as total_prompt_tokens,
+             COALESCE(SUM(l.completion_tokens), 0) as total_completion_tokens
+      FROM request_logs l
+    `).get() as { total_prompt_tokens: number; total_completion_tokens: number };
+
+    return c.json({
+      accounts, maxConcurrent: config.maxConcurrentPerAccount,
+      totalAccounts, page, limit,
+      totalPromptTokens: totals.total_prompt_tokens,
+      totalCompletionTokens: totals.total_completion_tokens,
+    });
   });
 
   admin.get('/stats/api-keys', (c) => {
+    const page = Math.max(1, Number(c.req.query('page') ?? 1));
+    const limit = Math.min(Math.max(1, Number(c.req.query('limit') ?? 20)), 100);
+    const offset = (page - 1) * limit;
+
+    const total = (db.prepare('SELECT COUNT(*) as cnt FROM api_keys').get() as { cnt: number }).cnt;
     const apiKeys = db.prepare(`
       SELECT k.id, k.key, k.name, k.is_active, k.request_count, k.last_used_at,
              COALESCE(COUNT(l.id), 0) as total_requests,
@@ -180,8 +193,110 @@ export function registerAdmin(app: Hono) {
       LEFT JOIN request_logs l ON k.id = l.api_key_id
       GROUP BY k.id
       ORDER BY k.created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(limit, offset);
+    return c.json({ apiKeys, total, page, limit });
+  });
+
+  admin.get('/stats/overview', (c) => {
+    // 1. 今日概览
+    const today = db.prepare(`
+      SELECT COUNT(*) as requests,
+             COALESCE(SUM(prompt_tokens + completion_tokens + reasoning_tokens), 0) as tokens,
+             COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END), 0) as success_count,
+             COALESCE(AVG(CASE WHEN status='success' THEN duration_ms END), 0) as avg_latency
+      FROM request_logs WHERE date(created_at) = date('now')
+    `).get() as any;
+
+    const yesterday = db.prepare(`
+      SELECT COUNT(*) as requests,
+             COALESCE(SUM(prompt_tokens + completion_tokens + reasoning_tokens), 0) as tokens
+      FROM request_logs WHERE date(created_at) = date('now', '-1 day')
+    `).get() as any;
+
+    // 2. 每日趋势（最近 30 天）
+    const dailyTrend = db.prepare(`
+      SELECT date(created_at) as date,
+             COALESCE(SUM(prompt_tokens), 0) as input_tokens,
+             COALESCE(SUM(completion_tokens), 0) as output_tokens,
+             COUNT(*) as requests
+      FROM request_logs
+      WHERE created_at >= date('now', '-30 days')
+      GROUP BY date(created_at)
+      ORDER BY date ASC
     `).all();
-    return c.json({ apiKeys });
+
+    // 3. 端点分布
+    const endpointDist = db.prepare(`
+      SELECT endpoint,
+             COUNT(*) as requests,
+             COALESCE(SUM(prompt_tokens + completion_tokens), 0) as tokens
+      FROM request_logs
+      GROUP BY endpoint
+    `).all();
+
+    // 4. 模型分布（Top 5）
+    const modelDist = db.prepare(`
+      SELECT model,
+             COUNT(*) as requests,
+             COALESCE(SUM(prompt_tokens + completion_tokens), 0) as tokens
+      FROM request_logs
+      WHERE model IS NOT NULL AND model != ''
+      GROUP BY model
+      ORDER BY tokens DESC
+      LIMIT 5
+    `).all();
+
+    // 5. 账号排行（Top 10）
+    const accountRanking = db.prepare(`
+      SELECT COALESCE(a.alias, a.user_id) as name,
+             COALESCE(SUM(l.prompt_tokens + l.completion_tokens), 0) as tokens,
+             COUNT(l.id) as requests
+      FROM request_logs l
+      LEFT JOIN accounts a ON l.account_id = a.id
+      GROUP BY l.account_id
+      ORDER BY tokens DESC
+      LIMIT 10
+    `).all();
+
+    // 6. API Key 排行（Top 10）
+    const apiKeyRanking = db.prepare(`
+      SELECT COALESCE(k.name, k.key) as name,
+             COALESCE(SUM(l.prompt_tokens + l.completion_tokens), 0) as tokens,
+             COUNT(l.id) as requests
+      FROM request_logs l
+      LEFT JOIN api_keys k ON l.api_key_id = k.id
+      WHERE l.api_key_id IS NOT NULL
+      GROUP BY l.api_key_id
+      ORDER BY tokens DESC
+      LIMIT 10
+    `).all();
+
+    // 7. 每小时分布（今天）
+    const hourlyDist = db.prepare(`
+      SELECT CAST(strftime('%H', created_at) AS INTEGER) as hour,
+             COUNT(*) as requests
+      FROM request_logs
+      WHERE date(created_at) = date('now')
+      GROUP BY hour
+      ORDER BY hour
+    `).all();
+
+    return c.json({
+      today: {
+        requests: today.requests,
+        tokens: today.tokens,
+        successRate: today.requests > 0 ? Math.round((today.success_count / today.requests) * 1000) / 10 : 100,
+        avgLatency: Math.round(today.avg_latency),
+      },
+      yesterday: { requests: yesterday.requests, tokens: yesterday.tokens },
+      dailyTrend,
+      endpointDist,
+      modelDist,
+      accountRanking,
+      apiKeyRanking,
+      hourlyDist,
+    });
   });
 
   // --- API Keys ---
@@ -244,36 +359,23 @@ export function registerAdmin(app: Hono) {
 
   admin.patch('/config', async (c) => {
     const body = await c.req.json();
-    const envUpdates: Record<string, string> = {};
-    const envKeyMap: Record<string, string> = {
-      maxReplayMessages: 'MAX_REPLAY_MESSAGES',
-      maxQueryChars: 'MAX_QUERY_CHARS',
-      contextResetThreshold: 'CONTEXT_RESET_THRESHOLD',
-      maxConcurrentPerAccount: 'MAX_CONCURRENT_PER_ACCOUNT',
-      sessionTtlDays: 'SESSION_TTL_DAYS',
-      thinkMode: 'THINK_MODE',
-      sessionIsolation: 'SESSION_ISOLATION',
-    };
     const numericKeys = ['maxReplayMessages', 'maxQueryChars', 'contextResetThreshold', 'maxConcurrentPerAccount', 'sessionTtlDays'];
     for (const key of numericKeys) {
       if (body[key] !== undefined) {
         const v = Number(body[key]);
         if (v > 0) {
           (config as Record<string, unknown>)[key] = v;
-          envUpdates[envKeyMap[key]] = String(v);
+          saveSetting(key, String(v));
         }
       }
     }
     if (body.thinkMode && ['passthrough', 'strip', 'separate'].includes(body.thinkMode)) {
       (config as Record<string, unknown>).thinkMode = body.thinkMode;
-      envUpdates.THINK_MODE = body.thinkMode;
+      saveSetting('thinkMode', body.thinkMode);
     }
     if (body.sessionIsolation && ['manual', 'auto', 'per-request'].includes(body.sessionIsolation)) {
       (config as Record<string, unknown>).sessionIsolation = body.sessionIsolation;
-      envUpdates.SESSION_ISOLATION = body.sessionIsolation;
-    }
-    if (Object.keys(envUpdates).length > 0) {
-      try { updateEnvFile(envUpdates); } catch {}
+      saveSetting('sessionIsolation', body.sessionIsolation);
     }
     return c.json({ message: 'Config updated' });
   });
@@ -285,7 +387,7 @@ export function registerAdmin(app: Hono) {
     }
     const newKey = body.newKey.trim();
     (config as Record<string, unknown>).adminKey = newKey;
-    try { updateEnvFile({ ADMIN_KEY: newKey }); } catch {}
+    saveSetting('adminKey', newKey);
     return c.json({ message: 'Admin key updated' });
   });
 

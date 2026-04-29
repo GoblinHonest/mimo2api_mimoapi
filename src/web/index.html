@@ -174,6 +174,7 @@
       <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5 mb-4">
         <h2 class="text-sm font-semibold text-slate-300 mb-4">账号列表</h2>
         <div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-xs text-slate-500 border-b border-[#2d3148]"><th class="pb-2 pr-4 font-medium">别名</th><th class="pb-2 pr-4 font-medium">用户ID</th><th class="pb-2 pr-4 font-medium">状态</th><th class="pb-2 pr-4 font-medium">并发</th><th class="pb-2 pr-4 font-medium">累计请求</th><th class="pb-2 pr-4 font-medium">累计Token</th><th class="pb-2 pr-4 font-medium">创建时间</th><th class="pb-2 font-medium">操作</th></tr></thead><tbody id="accountTable" class="divide-y divide-[#2d3148]"></tbody></table></div>
+        <div class="flex gap-1 mt-4" id="accountPagination"></div>
       </div>
     </div>
 
@@ -194,21 +195,55 @@
       <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5">
         <h2 class="text-sm font-semibold text-slate-300 mb-4">各账号并发状态</h2>
         <div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-xs text-slate-500 border-b border-[#2d3148]"><th class="pb-2 pr-4 font-medium">别名</th><th class="pb-2 pr-4 font-medium">用户ID</th><th class="pb-2 pr-4 font-medium">当前并发</th><th class="pb-2 pr-4 font-medium">负载</th><th class="pb-2 font-medium">状态</th></tr></thead><tbody id="monitorTable" class="divide-y divide-[#2d3148]"></tbody></table></div>
+        <div class="flex gap-1 mt-4" id="monitorPagination"></div>
       </div>
     </div>
 
     <!-- Token 统计 -->
     <div class="page" id="page-stats">
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4" id="statsGrid"></div>
+      <!-- KPI 指标卡片 -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="statsKpi"></div>
+      <!-- 每日趋势 -->
+      <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5 mb-4">
+        <h2 class="text-sm font-semibold text-slate-300 mb-4">近 30 天用量趋势</h2>
+        <canvas id="trendChart" height="100"></canvas>
+      </div>
+      <!-- 分布图 -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5">
+          <h2 class="text-sm font-semibold text-slate-300 mb-4">端点分布</h2>
+          <div class="flex items-center justify-center"><canvas id="endpointChart" width="280" height="200"></canvas></div>
+        </div>
+        <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5">
+          <h2 class="text-sm font-semibold text-slate-300 mb-4">模型分布</h2>
+          <div class="flex items-center justify-center"><canvas id="modelChart" width="280" height="200"></canvas></div>
+        </div>
+      </div>
+      <!-- 排行榜 + 每小时分布 -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5">
+          <h2 class="text-sm font-semibold text-slate-300 mb-3">账号用量排行</h2>
+          <div id="accountRanking"></div>
+        </div>
+        <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5">
+          <h2 class="text-sm font-semibold text-slate-300 mb-3">API Key 用量排行</h2>
+          <div id="apiKeyRanking"></div>
+        </div>
+        <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5">
+          <h2 class="text-sm font-semibold text-slate-300 mb-3">今日请求分布</h2>
+          <canvas id="hourlyChart" height="180"></canvas>
+        </div>
+      </div>
+      <!-- 详细统计表格 -->
       <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5 mb-4">
         <div class="flex flex-wrap items-center gap-3 mb-4">
           <button id="statsTabAccount" class="px-3 py-1.5 text-sm font-medium rounded-lg transition-colors bg-indigo-500 text-white" onclick="switchStatsTab('account')">按账号统计</button>
           <button id="statsTabApiKey" class="px-3 py-1.5 text-sm font-medium rounded-lg transition-colors border border-[#2d3148] text-slate-400 hover:border-indigo-500 hover:text-indigo-400" onclick="switchStatsTab('apikey')">按API密钥统计</button>
         </div>
-        <div id="statsTableAccount" class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-xs text-slate-500 border-b border-[#2d3148]"><th class="pb-2 pr-4 font-medium">别名</th><th class="pb-2 pr-4 font-medium">总请求</th><th class="pb-2 pr-4 font-medium">输入 Token</th><th class="pb-2 pr-4 font-medium">输出 Token</th><th class="pb-2 font-medium">总 Token</th></tr></thead><tbody id="statsTableAccountBody" class="divide-y divide-[#2d3148]"></tbody></table></div>
-        <div id="statsTableApiKey" class="overflow-x-auto hidden"><table class="w-full text-sm"><thead><tr class="text-left text-xs text-slate-500 border-b border-[#2d3148]"><th class="pb-2 pr-4 font-medium">密钥名称</th><th class="pb-2 pr-4 font-medium">总请求</th><th class="pb-2 pr-4 font-medium">输入 Token</th><th class="pb-2 pr-4 font-medium">输出 Token</th><th class="pb-2 pr-4 font-medium">总 Token</th><th class="pb-2 font-medium">最后使用</th></tr></thead><tbody id="statsTableApiKeyBody" class="divide-y divide-[#2d3148]"></tbody></table></div>
+        <div id="statsTableAccount" class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-xs text-slate-500 border-b border-[#2d3148]"><th class="pb-2 pr-4 font-medium">别名</th><th class="pb-2 pr-4 font-medium">总请求</th><th class="pb-2 pr-4 font-medium">输入 Token</th><th class="pb-2 pr-4 font-medium">输出 Token</th><th class="pb-2 font-medium">总 Token</th></tr></thead><tbody id="statsTableAccountBody" class="divide-y divide-[#2d3148]"></tbody></table><div class="flex gap-1 mt-4" id="statsAccountPagination"></div></div>
+        <div id="statsTableApiKey" class="overflow-x-auto hidden"><table class="w-full text-sm"><thead><tr class="text-left text-xs text-slate-500 border-b border-[#2d3148]"><th class="pb-2 pr-4 font-medium">密钥名称</th><th class="pb-2 pr-4 font-medium">总请求</th><th class="pb-2 pr-4 font-medium">输入 Token</th><th class="pb-2 pr-4 font-medium">输出 Token</th><th class="pb-2 pr-4 font-medium">总 Token</th><th class="pb-2 font-medium">最后使用</th></tr></thead><tbody id="statsTableApiKeyBody" class="divide-y divide-[#2d3148]"></tbody></table><div class="flex gap-1 mt-4" id="statsApiKeyPagination"></div></div>
       </div>
-      <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><h2 class="text-sm font-semibold text-slate-300 mb-4">近期用量趋势</h2><canvas id="tokenChart" height="80"></canvas></div>
+      <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><h2 class="text-sm font-semibold text-slate-300 mb-4">分账号用量对比</h2><canvas id="tokenChart" height="80"></canvas></div>
     </div>
 
     <!-- 请求日志 -->
@@ -261,7 +296,7 @@
         </div>
         <div class="flex flex-wrap items-center gap-3 mt-4">
           <button onclick="saveSettings()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer">保存配置</button>
-          <span class="text-xs text-slate-500">保存后立即生效，同时写入 .env 文件</span>
+          <span class="text-xs text-slate-500">保存后立即生效，同时写入数据库</span>
         </div>
       </div>
       <div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5">
@@ -405,7 +440,26 @@ const api = (path, opts={}) => fetch(path, {...opts, headers:{'Content-Type':'ap
 function toast(msg,ok=true){const el=document.createElement('div');el.className='toast-item';el.style.color=ok?'var(--c-accent-green)':'var(--c-accent-red)';el.textContent=msg;document.getElementById('toast').appendChild(el);setTimeout(()=>el.remove(),3000);}
 let monitorTimer=null;
 function showPage(name,el){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(n=>{n.classList.remove('active');n.classList.remove('text-slate-200');n.classList.add('text-slate-400');});document.getElementById('page-'+name).classList.add('active');el.classList.add('active');el.classList.remove('text-slate-400');el.classList.add('text-slate-200');clearInterval(monitorTimer);if(name==='monitor'){loadMonitor();monitorTimer=setInterval(loadMonitor,3000);}else{({accounts:loadAccounts,apikeys:loadApiKeys,stats:loadStats,logs:()=>loadLogs(1),sessions:loadSessions,settings:loadSettings})[name]?.();}}
-async function loadAccounts(){const data=await api('/admin/accounts');const tbody=document.getElementById('accountTable');if(!data||data.length===0){tbody.innerHTML='<tr><td colspan="8" class="py-8 text-center text-slate-500 text-sm">暂无账号数据</td></tr>';return;}tbody.innerHTML=data.map(a=>{const totalTokens=(a.total_prompt_tokens||0)+(a.total_completion_tokens||0);const createdDate=a.created_at?new Date(a.created_at).toLocaleDateString('zh-CN',{month:'2-digit',day:'2-digit'}):'-';return `<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4">${a.alias||'-'}</td><td class="py-2.5 pr-4"><code class="text-xs text-slate-400 font-mono">${a.user_id||'-'}</code></td><td class="py-2.5 pr-4"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${a.is_active?'bg-emerald-900/50 text-emerald-400':'bg-red-900/50 text-red-400'}">${a.is_active?'启用':'禁用'}</span></td><td class="py-2.5 pr-4 text-slate-400">${a.active_requests}</td><td class="py-2.5 pr-4 text-slate-400">${(a.total_requests||0).toLocaleString()}</td><td class="py-2.5 pr-4 text-indigo-400">${totalTokens>0?(totalTokens/1000).toFixed(1)+'K':'-'}</td><td class="py-2.5 pr-4 text-xs text-slate-500">${createdDate}</td><td class="py-2.5"><div class="flex gap-1.5"><button class="px-2.5 py-1 border border-[#2d3148] hover:border-indigo-500 text-slate-400 hover:text-indigo-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="editAccount('${a.id}','${a.alias||''}')">编辑</button><button class="px-2.5 py-1 border border-[#2d3148] hover:border-indigo-500 text-slate-400 hover:text-indigo-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="testAccount('${a.id}')">测试</button><button class="px-2.5 py-1 border border-[#2d3148] hover:border-indigo-500 text-slate-400 hover:text-indigo-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="toggleAccount('${a.id}',${a.is_active})">${a.is_active?'禁用':'启用'}</button><button class="px-2.5 py-1 bg-red-900/40 hover:bg-red-800/60 text-red-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="removeAccount('${a.id}')">删除</button></div></td></tr>`;}).join('');}
+function renderPagination(containerId, total, limit, currentPage, loadFn) {
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const pg = document.getElementById(containerId);
+  if (!pg) return;
+  const maxShow = 7;
+  let start = Math.max(1, currentPage - Math.floor(maxShow / 2));
+  let end = Math.min(totalPages, start + maxShow - 1);
+  if (end - start < maxShow - 1) start = Math.max(1, end - maxShow + 1);
+  let html = `<span class="text-xs text-slate-500 mr-2 self-center">共 ${total} 条</span>`;
+  if (start > 1) html += `<button class="px-2.5 py-1 text-xs rounded-lg border transition-colors cursor-pointer border-[#2d3148] text-slate-400 hover:border-indigo-500 hover:text-indigo-400" onclick="${loadFn}(1)">1</button>`;
+  if (start > 2) html += '<span class="text-slate-600 text-xs px-1 self-center">...</span>';
+  for (let i = start; i <= end; i++) {
+    html += `<button class="px-2.5 py-1 text-xs rounded-lg border transition-colors cursor-pointer ${i===currentPage?'bg-indigo-500 border-indigo-500 text-white':'border-[#2d3148] text-slate-400 hover:border-indigo-500 hover:text-indigo-400'}" onclick="${loadFn}(${i})">${i}</button>`;
+  }
+  if (end < totalPages - 1) html += '<span class="text-slate-600 text-xs px-1 self-center">...</span>';
+  if (end < totalPages) html += `<button class="px-2.5 py-1 text-xs rounded-lg border transition-colors cursor-pointer border-[#2d3148] text-slate-400 hover:border-indigo-500 hover:text-indigo-400" onclick="${loadFn}(${totalPages})">${totalPages}</button>`;
+  pg.innerHTML = html;
+}
+let accountPage=1;
+async function loadAccounts(page){if(page)accountPage=page;const d=await api(`/admin/accounts?page=${accountPage}&limit=20`);const data=d.accounts||[];const tbody=document.getElementById('accountTable');if(data.length===0){tbody.innerHTML='<tr><td colspan="8" class="py-8 text-center text-slate-500 text-sm">暂无账号数据</td></tr>';document.getElementById('accountPagination').innerHTML='';return;}tbody.innerHTML=data.map(a=>{const totalTokens=(a.total_prompt_tokens||0)+(a.total_completion_tokens||0);const createdDate=a.created_at?new Date(a.created_at).toLocaleDateString('zh-CN',{month:'2-digit',day:'2-digit'}):'-';return `<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4">${a.alias||'-'}</td><td class="py-2.5 pr-4"><code class="text-xs text-slate-400 font-mono">${a.user_id||'-'}</code></td><td class="py-2.5 pr-4"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${a.is_active?'bg-emerald-900/50 text-emerald-400':'bg-red-900/50 text-red-400'}">${a.is_active?'启用':'禁用'}</span></td><td class="py-2.5 pr-4 text-slate-400">${a.active_requests}</td><td class="py-2.5 pr-4 text-slate-400">${(a.total_requests||0).toLocaleString()}</td><td class="py-2.5 pr-4 text-indigo-400">${totalTokens>0?(totalTokens/1000).toFixed(1)+'K':'-'}</td><td class="py-2.5 pr-4 text-xs text-slate-500">${createdDate}</td><td class="py-2.5"><div class="flex gap-1.5"><button class="px-2.5 py-1 border border-[#2d3148] hover:border-indigo-500 text-slate-400 hover:text-indigo-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="editAccount('${a.id}','${a.alias||''}')">编辑</button><button class="px-2.5 py-1 border border-[#2d3148] hover:border-indigo-500 text-slate-400 hover:text-indigo-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="testAccount('${a.id}')">测试</button><button class="px-2.5 py-1 border border-[#2d3148] hover:border-indigo-500 text-slate-400 hover:text-indigo-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="toggleAccount('${a.id}',${a.is_active})">${a.is_active?'禁用':'启用'}</button><button class="px-2.5 py-1 bg-red-900/40 hover:bg-red-800/60 text-red-400 text-xs rounded-lg transition-colors cursor-pointer" onclick="removeAccount('${a.id}')">删除</button></div></td></tr>`;}).join('');renderPagination('accountPagination',d.total,d.limit,accountPage,'loadAccounts');}
 async function addAccount(){const curl=document.getElementById('addCurl').value.trim(),alias=document.getElementById('addAlias').value.trim();if(!curl){toast('请粘贴 cURL 命令',false);return;}const res=await api('/admin/accounts',{method:'POST',body:{curl,alias}});res.api_key?toast('添加成功，API Key: '+res.api_key):toast(res.error||'添加失败',false);if(res.api_key)loadAccounts();}
 function toggleManual(){const f=document.getElementById('manualForm');f.classList.toggle('hidden');}
 async function addAccountManual(){const body={service_token:document.getElementById('mST').value.trim(),user_id:document.getElementById('mUID').value.trim(),ph_token:document.getElementById('mPH').value.trim(),alias:document.getElementById('addAlias').value.trim()};if(!body.service_token){toast('serviceToken不能为空',false);return;}const res=await api('/admin/accounts',{method:'POST',body});res.api_key?toast('添加成功: '+res.api_key):toast(res.error||'失败',false);if(res.api_key)loadAccounts();}
@@ -414,10 +468,95 @@ function editAccount(id,alias){showModal({title:'修改别名',message:'请输�
 async function testAccount(id){toast('测试中...');const res=await api('/admin/accounts/test',{method:'POST',body:{id}});res.success?toast('有效: '+res.response.slice(0,80)):toast('无效: '+res.error,false);}
 async function toggleAccount(id,cur){await api('/admin/accounts/'+id,{method:'PATCH',body:{is_active:cur?0:1}});loadAccounts();}
 async function removeAccount(id){const ok=await showModal({title:'删除账号',message:'确认删除此账号？删除后不可恢复。',dangerous:true,confirmText:'删除'});if(!ok)return;await api('/admin/accounts/'+id,{method:'DELETE'});toast('已删除');loadAccounts();}
-async function loadMonitor(){const s=await api('/admin/stats');const accs=s.accounts||[];const maxConcurrent=s.maxConcurrent||5;const totalActive=accs.reduce((x,a)=>x+a.active_requests,0);const totalReqs=accs.reduce((x,a)=>x+a.total_requests,0);document.getElementById('monitorStats').innerHTML=`<div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><div class="text-2xl font-bold text-slate-100">${accs.filter(a=>a.is_active).length}</div><div class="text-xs text-slate-500 mt-1">活跃账号</div></div><div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><div class="text-2xl font-bold text-indigo-400">${totalActive}</div><div class="text-xs text-slate-500 mt-1">当前并发</div></div><div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><div class="text-2xl font-bold text-emerald-400">${totalReqs}</div><div class="text-xs text-slate-500 mt-1">总请求数</div></div>`;document.getElementById('monitorTable').innerHTML=accs.map(a=>{const percent=Math.round((a.active_requests/maxConcurrent)*100);const barColor=percent>80?'bg-red-500':percent>50?'bg-yellow-500':'bg-emerald-500';return `<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4">${a.alias||'-'}</td><td class="py-2.5 pr-4"><code class="text-xs text-slate-400 font-mono">${(a.user_id||'').slice(0,8)||'-'}</code></td><td class="py-2.5 pr-4 text-slate-400">${a.active_requests}/${maxConcurrent}</td><td class="py-2.5 pr-4"><div class="flex items-center gap-2"><div class="w-24 h-2 bg-slate-800 rounded-full overflow-hidden"><div class="${barColor} h-full transition-all" style="width:${percent}%"></div></div><span class="text-xs text-slate-500">${percent}%</span></div></td><td class="py-2.5"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${a.is_active?'bg-emerald-900/50 text-emerald-400':'bg-red-900/50 text-red-400'}">${a.is_active?'启用':'禁用'}</span></td></tr>`;}).join('');}
-let tokenChart=null;
-let statsApiKeyData=null;
-async function loadStats(){const s=await api('/admin/stats');const accs=s.accounts||[];const totalPT=accs.reduce((x,a)=>x+a.total_prompt_tokens,0);const totalCT=accs.reduce((x,a)=>x+a.total_completion_tokens,0);document.getElementById('statsGrid').innerHTML=`<div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><div class="text-2xl font-bold text-indigo-400">${totalPT.toLocaleString()}</div><div class="text-xs text-slate-500 mt-1">输入 Token</div></div><div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><div class="text-2xl font-bold text-emerald-400">${totalCT.toLocaleString()}</div><div class="text-xs text-slate-500 mt-1">输出 Token</div></div><div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><div class="text-2xl font-bold text-slate-100">${(totalPT+totalCT).toLocaleString()}</div><div class="text-xs text-slate-500 mt-1">总 Token</div></div>`;document.getElementById('statsTableAccountBody').innerHTML=accs.map(a=>`<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4">${a.alias||'-'}</td><td class="py-2.5 pr-4 text-slate-400">${a.total_requests}</td><td class="py-2.5 pr-4 text-indigo-400">${(a.total_prompt_tokens||0).toLocaleString()}</td><td class="py-2.5 pr-4 text-emerald-400">${(a.total_completion_tokens||0).toLocaleString()}</td><td class="py-2.5 text-slate-300">${((a.total_prompt_tokens||0)+(a.total_completion_tokens||0)).toLocaleString()}</td></tr>`).join('');const apiKeyStats=await api('/admin/stats/api-keys');statsApiKeyData=apiKeyStats.apiKeys||[];document.getElementById('statsTableApiKeyBody').innerHTML=statsApiKeyData.map(k=>`<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4">${k.name||'-'}</td><td class="py-2.5 pr-4 text-slate-400">${k.total_requests||0}</td><td class="py-2.5 pr-4 text-indigo-400">${(k.total_prompt_tokens||0).toLocaleString()}</td><td class="py-2.5 pr-4 text-emerald-400">${(k.total_completion_tokens||0).toLocaleString()}</td><td class="py-2.5 pr-4 text-slate-300">${((k.total_prompt_tokens||0)+(k.total_completion_tokens||0)).toLocaleString()}</td><td class="py-2.5 text-xs text-slate-500">${k.last_used_at?new Date(k.last_used_at).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'-'}</td></tr>`).join('');const ctx=document.getElementById('tokenChart').getContext('2d');const labels=accs.map(a=>a.alias||a.api_key.slice(0,12));const ptData=accs.map(a=>a.total_prompt_tokens||0);const ctData=accs.map(a=>a.total_completion_tokens||0);if(tokenChart)tokenChart.destroy();const isLight=document.documentElement.dataset.theme==='light';const chartTextColor=isLight?'#64748b':'#94a3b8';const chartGridColor=isLight?'#e2e8f0':'#2d3148';tokenChart=new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:'输入 Token',data:ptData,backgroundColor:'#7c86ff88'},{label:'输出 Token',data:ctData,backgroundColor:'#22c55e88'}]},options:{responsive:true,plugins:{legend:{labels:{color:chartTextColor}}},scales:{x:{ticks:{color:chartTextColor},grid:{color:chartGridColor}},y:{ticks:{color:chartTextColor},grid:{color:chartGridColor}}}}});}
+let monitorPage=1;
+async function loadMonitor(page){if(page)monitorPage=page;const s=await api(`/admin/stats?page=${monitorPage}&limit=20`);const accs=s.accounts||[];const maxConcurrent=s.maxConcurrent||5;const totalActive=accs.reduce((x,a)=>x+a.active_requests,0);document.getElementById('monitorStats').innerHTML=`<div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><div class="text-2xl font-bold text-slate-100">${s.totalAccounts||0}</div><div class="text-xs text-slate-500 mt-1">总账号</div></div><div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><div class="text-2xl font-bold text-indigo-400">${totalActive}</div><div class="text-xs text-slate-500 mt-1">当前并发</div></div><div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-5"><div class="text-2xl font-bold text-emerald-400">${accs.reduce((x,a)=>x+a.total_requests,0)}</div><div class="text-xs text-slate-500 mt-1">当前页请求数</div></div>`;document.getElementById('monitorTable').innerHTML=accs.map(a=>{const percent=Math.round((a.active_requests/maxConcurrent)*100);const barColor=percent>80?'bg-red-500':percent>50?'bg-yellow-500':'bg-emerald-500';return `<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4">${a.alias||'-'}</td><td class="py-2.5 pr-4"><code class="text-xs text-slate-400 font-mono">${(a.user_id||'').slice(0,8)||'-'}</code></td><td class="py-2.5 pr-4 text-slate-400">${a.active_requests}/${maxConcurrent}</td><td class="py-2.5 pr-4"><div class="flex items-center gap-2"><div class="w-24 h-2 bg-slate-800 rounded-full overflow-hidden"><div class="${barColor} h-full transition-all" style="width:${percent}%"></div></div><span class="text-xs text-slate-500">${percent}%</span></div></td><td class="py-2.5"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${a.is_active?'bg-emerald-900/50 text-emerald-400':'bg-red-900/50 text-red-400'}">${a.is_active?'启用':'禁用'}</span></td></tr>`;}).join('');renderPagination('monitorPagination',s.totalAccounts,s.limit,monitorPage,'loadMonitor');}
+const charts={token:null,trend:null,endpoint:null,model:null,hourly:null};
+const CHART_COLORS=['#818cf8','#34d399','#fbbf24','#f87171','#60a5fa','#a78bfa','#fb923c','#2dd4bf','#e879f9','#94a3b8'];
+function chartTheme(){const isLight=document.documentElement.dataset.theme==='light';return{text:isLight?'#64748b':'#94a3b8',grid:isLight?'#e2e8f0':'#1e293b',surface:isLight?'#ffffff':'#1a1d27'};}
+function destroyChart(k){if(charts[k]){charts[k].destroy();charts[k]=null;}}
+
+function fmtNum(n){if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return String(n);}
+function diffPct(cur,prev){if(!prev)return cur>0?'↑ --':'--';const pct=Math.round(((cur-prev)/prev)*100);return pct>=0?`↑ ${pct}%`:`↓ ${Math.abs(pct)}%`;}
+
+let statsAccountPage=1,statsApiKeyPage=1;
+async function loadStats(){
+  // 加载 overview 数据
+  const ov=await api('/admin/stats/overview');
+  const t=chartTheme();
+
+  // KPI 卡片
+  const kpiHtml=(label,value,sub,color)=>`<div class="bg-[#1a1d27] border border-[#2d3148] rounded-xl p-4"><div class="text-xs text-slate-500 mb-1">${label}</div><div class="text-xl font-bold ${color}">${value}</div><div class="text-xs mt-1" style="color:var(--c-text-4)">${sub}</div></div>`;
+  const td=ov.today||{};const yd=ov.yesterday||{};
+  document.getElementById('statsKpi').innerHTML=[
+    kpiHtml('今日请求数',fmtNum(td.requests||0),diffPct(td.requests||0,yd.requests||0)+' 昨日','text-slate-100'),
+    kpiHtml('今日 Token',fmtNum(td.tokens||0),diffPct(td.tokens||0,yd.tokens||0)+' 昨日','text-indigo-400'),
+    kpiHtml('成功率',(td.successRate??100)+'%','平均延迟 '+(td.avgLatency||0)+'ms','text-emerald-400'),
+    kpiHtml('平均响应',(td.avgLatency||0)+'ms','per request','text-amber-400'),
+  ].join('');
+
+  // 每日趋势
+  const trend=ov.dailyTrend||[];
+  destroyChart('trend');
+  if(trend.length){
+    charts.trend=new Chart(document.getElementById('trendChart').getContext('2d'),{type:'line',data:{labels:trend.map(d=>d.date.slice(5)),datasets:[{label:'Input Token',data:trend.map(d=>d.input_tokens),borderColor:'#818cf8',backgroundColor:'rgba(129,140,248,.15)',fill:true,tension:.3,pointRadius:2},{label:'Output Token',data:trend.map(d=>d.output_tokens),borderColor:'#34d399',backgroundColor:'rgba(52,211,153,.1)',fill:true,tension:.3,pointRadius:2}]},options:{responsive:true,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:t.text}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+fmtNum(ctx.raw)}}},scales:{x:{ticks:{color:t.text,maxRotation:45},grid:{color:t.grid}},y:{ticks:{color:t.text,callback:v=>fmtNum(v)},grid:{color:t.grid}}}}});
+  }
+
+  // 端点分布
+  const ep=ov.endpointDist||[];
+  destroyChart('endpoint');
+  if(ep.length){
+    const epLabels=ep.map(e=>e.endpoint||'unknown');
+    const epData=ep.map(e=>e.requests);
+    charts.endpoint=new Chart(document.getElementById('endpointChart').getContext('2d'),{type:'doughnut',data:{labels:epLabels,datasets:[{data:epData,backgroundColor:CHART_COLORS.slice(0,ep.length),borderWidth:0}]},options:{responsive:false,plugins:{legend:{position:'bottom',labels:{color:t.text,padding:12}},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw+' ('+Math.round(ctx.raw/epData.reduce((a,b)=>a+b,0)*100)+'%)'}}}}});
+  }
+
+  // 模型分布
+  const md=ov.modelDist||[];
+  destroyChart('model');
+  if(md.length){
+    const mdLabels=md.map(m=>m.model||'unknown');
+    const mdData=md.map(m=>m.tokens);
+    charts.model=new Chart(document.getElementById('modelChart').getContext('2d'),{type:'doughnut',data:{labels:mdLabels,datasets:[{data:mdData,backgroundColor:CHART_COLORS.slice(0,md.length),borderWidth:0}]},options:{responsive:false,plugins:{legend:{position:'bottom',labels:{color:t.text,padding:12}},tooltip:{callbacks:{label:ctx=>ctx.label+': '+fmtNum(ctx.raw)}}}}});
+  }
+
+  // 账号排行
+  const ar=ov.accountRanking||[];
+  document.getElementById('accountRanking').innerHTML=ar.length?ar.map((a,i)=>{const maxTok=ar[0].tokens||1;const pct=Math.round(a.tokens/maxTok*100);return`<div class="mb-2.5"><div class="flex justify-between text-xs mb-1"><span class="text-slate-300 truncate max-w-[60%]">${i+1}. ${a.name||'-'}</span><span class="text-indigo-400 font-mono">${fmtNum(a.tokens)}</span></div><div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden"><div class="bg-indigo-500 h-full rounded-full" style="width:${pct}%"></div></div></div>`}).join(''):'<div class="text-xs text-slate-500 text-center py-4">暂无数据</div>';
+
+  // API Key 排行
+  const kr=ov.apiKeyRanking||[];
+  document.getElementById('apiKeyRanking').innerHTML=kr.length?kr.map((k,i)=>{const maxTok=kr[0].tokens||1;const pct=Math.round(k.tokens/maxTok*100);const name=k.name&&k.name.length>20?k.name.slice(0,20)+'...':(k.name||'-');return`<div class="mb-2.5"><div class="flex justify-between text-xs mb-1"><span class="text-slate-300 truncate max-w-[60%]">${i+1}. ${name}</span><span class="text-emerald-400 font-mono">${fmtNum(k.tokens)}</span></div><div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden"><div class="bg-emerald-500 h-full rounded-full" style="width:${pct}%"></div></div></div>`}).join(''):'<div class="text-xs text-slate-500 text-center py-4">暂无数据</div>';
+
+  // 每小时分布
+  const hd=ov.hourlyDist||[];
+  destroyChart('hourly');
+  const hourMap=new Map(hd.map(h=>[h.hour,h.requests]));
+  const hourLabels=Array.from({length:24},(_,i)=>i+':00');
+  const hourData=Array.from({length:24},(_,i)=>hourMap.get(i)||0);
+  charts.hourly=new Chart(document.getElementById('hourlyChart').getContext('2d'),{type:'bar',data:{labels:hourLabels,datasets:[{label:'请求数',data:hourData,backgroundColor:'rgba(129,140,248,.6)',borderRadius:3}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{ticks:{color:t.text,maxRotation:0,autoSkip:true,maxTicksLimit:12},grid:{display:false}},y:{ticks:{color:t.text},grid:{color:t.grid}}}}});
+
+  // 加载分页表格
+  await loadStatsTable();
+  await loadStatsApiKeys(statsApiKeyPage);
+}
+
+async function loadStatsTable(page){
+  if(page)statsAccountPage=page;
+  const s=await api(`/admin/stats?page=${statsAccountPage}&limit=20`);
+  const accs=s.accounts||[];
+  document.getElementById('statsTableAccountBody').innerHTML=accs.map(a=>`<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4">${a.alias||'-'}</td><td class="py-2.5 pr-4 text-slate-400">${a.total_requests}</td><td class="py-2.5 pr-4 text-indigo-400">${(a.total_prompt_tokens||0).toLocaleString()}</td><td class="py-2.5 pr-4 text-emerald-400">${(a.total_completion_tokens||0).toLocaleString()}</td><td class="py-2.5 text-slate-300">${((a.total_prompt_tokens||0)+(a.total_completion_tokens||0)).toLocaleString()}</td></tr>`).join('');
+  renderPagination('statsAccountPagination',s.totalAccounts,s.limit,statsAccountPage,'loadStatsTable');
+  // 柱状图
+  const t=chartTheme();
+  destroyChart('token');
+  if(accs.length){
+    const labels=accs.map(a=>a.alias||a.api_key.slice(0,12));
+    charts.token=new Chart(document.getElementById('tokenChart').getContext('2d'),{type:'bar',data:{labels,datasets:[{label:'输入 Token',data:accs.map(a=>a.total_prompt_tokens||0),backgroundColor:'#7c86ff88'},{label:'输出 Token',data:accs.map(a=>a.total_completion_tokens||0),backgroundColor:'#22c55e88'}]},options:{responsive:true,plugins:{legend:{labels:{color:t.text}}},scales:{x:{ticks:{color:t.text},grid:{color:t.grid}},y:{ticks:{color:t.text,callback:v=>fmtNum(v)},grid:{color:t.grid}}}}});
+  }
+}
+
+async function loadStatsApiKeys(page){if(page)statsApiKeyPage=page;const d=await api(`/admin/stats/api-keys?page=${statsApiKeyPage}&limit=20`);const keys=d.apiKeys||[];document.getElementById('statsTableApiKeyBody').innerHTML=keys.map(k=>`<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4">${k.name||'-'}</td><td class="py-2.5 pr-4 text-slate-400">${k.total_requests||0}</td><td class="py-2.5 pr-4 text-indigo-400">${(k.total_prompt_tokens||0).toLocaleString()}</td><td class="py-2.5 pr-4 text-emerald-400">${(k.total_completion_tokens||0).toLocaleString()}</td><td class="py-2.5 pr-4 text-slate-300">${((k.total_prompt_tokens||0)+(k.total_completion_tokens||0)).toLocaleString()}</td><td class="py-2.5 text-xs text-slate-500">${k.last_used_at?new Date(k.last_used_at).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'-'}</td></tr>`).join('');renderPagination('statsApiKeyPagination',d.total,d.limit,statsApiKeyPage,'loadStatsApiKeys');}
+
 function switchStatsTab(tab){if(tab==='account'){document.getElementById('statsTabAccount').className='px-3 py-1.5 text-sm font-medium rounded-lg transition-colors bg-indigo-500 text-white';document.getElementById('statsTabApiKey').className='px-3 py-1.5 text-sm font-medium rounded-lg transition-colors border border-[#2d3148] text-slate-400 hover:border-indigo-500 hover:text-indigo-400';document.getElementById('statsTableAccount').classList.remove('hidden');document.getElementById('statsTableApiKey').classList.add('hidden');}else{document.getElementById('statsTabAccount').className='px-3 py-1.5 text-sm font-medium rounded-lg transition-colors border border-[#2d3148] text-slate-400 hover:border-indigo-500 hover:text-indigo-400';document.getElementById('statsTabApiKey').className='px-3 py-1.5 text-sm font-medium rounded-lg transition-colors bg-indigo-500 text-white';document.getElementById('statsTableAccount').classList.add('hidden');document.getElementById('statsTableApiKey').classList.remove('hidden');}}
 let logPage=1;
 async function loadLogs(page=1){logPage=page;const status=document.getElementById('logStatus').value;const endpoint=document.getElementById('logEndpoint').value;let url=`/admin/logs?page=${page}&limit=50`;if(status)url+=`&status=${status}`;if(endpoint)url+=`&endpoint=${endpoint}`;const d=await api(url);document.getElementById('logTable').innerHTML=(d.logs||[]).map(l=>`<tr class="text-slate-300 hover:bg-[#242840] transition-colors"><td class="py-2.5 pr-4 text-xs text-slate-500 font-mono whitespace-nowrap">${l.created_at||''}</td><td class="py-2.5 pr-4"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900/50 text-indigo-400">${l.endpoint}</span></td><td class="py-2.5 pr-4 text-xs text-slate-400">${l.model||'-'}</td><td class="py-2.5 pr-4 text-xs text-indigo-400">${l.prompt_tokens??'-'}</td><td class="py-2.5 pr-4 text-xs text-emerald-400">${l.completion_tokens??'-'}</td><td class="py-2.5 pr-4 text-xs text-slate-400">${l.duration_ms??'-'}ms</td><td class="py-2.5"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${l.status==='success'?'bg-emerald-900/50 text-emerald-400':'bg-red-900/50 text-red-400'}">${l.status==='success'?'成功':'失败'}</span>${l.error?`<span class="text-red-400 text-xs ml-1">${l.error.slice(0,40)}</span>`:''}</td></tr>`).join('');const totalPages=Math.ceil((d.total||0)/50);const pg=document.getElementById('logPagination');pg.innerHTML=Array.from({length:Math.min(totalPages,10)},(_,i)=>`<button class="px-2.5 py-1 text-xs rounded-lg border transition-colors cursor-pointer ${i+1===page?'bg-indigo-500 border-indigo-500 text-white':'border-[#2d3148] text-slate-400 hover:border-indigo-500 hover:text-indigo-400'}" onclick="loadLogs(${i+1})">${i+1}</button>`).join('');}

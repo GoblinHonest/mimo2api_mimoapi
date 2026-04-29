@@ -64,6 +64,11 @@ export function initDb() {
       error TEXT,
       created_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 
   // 迁移：添加 last_message_fingerprint 列（如果不存在）

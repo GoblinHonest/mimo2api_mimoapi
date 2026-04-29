@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -9,12 +8,13 @@ import { initDb } from './db.js';
 import { registerOpenAI } from './adapters/openai.js';
 import { registerAnthropic } from './adapters/anthropic.js';
 import { registerAdmin } from './admin/routes.js';
-import { config } from './config.js';
+import { config, loadConfig } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = new Hono();
 
 initDb();
+loadConfig();
 
 app.use('/*', cors());
 
