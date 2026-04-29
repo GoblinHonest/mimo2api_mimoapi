@@ -10,6 +10,7 @@ export interface Account {
   api_key: string;
   is_active: number;
   active_requests: number;
+  request_count: number;
   created_at: string;
 }
 
@@ -49,11 +50,11 @@ export function getLeastBusyAccount(): Account | undefined {
 export function acquireAccount(maxConcurrent: number): Account | undefined {
   const txn = db.transaction(() => {
     const account = db.prepare(
-      'SELECT * FROM accounts WHERE is_active = 1 AND active_requests < ? ORDER BY active_requests ASC LIMIT 1'
+      'SELECT * FROM accounts WHERE is_active = 1 AND active_requests < ? ORDER BY active_requests ASC, request_count ASC LIMIT 1'
     ).get(maxConcurrent) as Account | undefined;
     if (!account) return undefined;
-    db.prepare('UPDATE accounts SET active_requests = active_requests + 1 WHERE id = ?').run(account.id);
-    return { ...account, active_requests: account.active_requests + 1 };
+    db.prepare('UPDATE accounts SET active_requests = active_requests + 1, request_count = request_count + 1 WHERE id = ?').run(account.id);
+    return { ...account, active_requests: account.active_requests + 1, request_count: account.request_count + 1 };
   });
   return txn();
 }

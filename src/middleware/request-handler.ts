@@ -53,7 +53,7 @@ export function logApiRequest(data: {
 }
 
 export function handleAccountError(account: Account, errorMsg: string) {
-  if (errorMsg.includes('401') || errorMsg.includes('403')) {
+  if (errorMsg.includes('401') || errorMsg.includes('403') || errorMsg.includes('451')) {
     markAccountInactive(account.id);
   }
 }

@@ -13,6 +13,10 @@ export function initDb() {
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
 
+  // 启动时重置所有 active_requests，防止重启后计数卡住
+  db.prepare('UPDATE accounts SET active_requests = 0').run();
+  console.log('[DB] Reset all accounts active_requests to 0');
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
@@ -23,6 +27,7 @@ export function initDb() {
       api_key TEXT NOT NULL UNIQUE,
       is_active INTEGER DEFAULT 1,
       active_requests INTEGER DEFAULT 0,
+      request_count INTEGER DEFAULT 0,
       created_at TEXT
     );
 
@@ -85,6 +90,20 @@ export function initDb() {
   try {
     db.exec(`ALTER TABLE request_logs ADD COLUMN api_key_id TEXT`);
     console.log('[DB] Added api_key_id column to request_logs table');
+  } catch (err: any) {
+    if (!err.message.includes('duplicate column name')) {
+      console.error('[DB] Migration error:', err);
+    }
+  }
+
+  // 迁移：accounts 增加 request_count 列（用于加权负载均衡）
+  try {
+    const accColNames = new Set((db.prepare("PRAGMA table_info(accounts)").all() as Array<{ name: string }>).map(c => c.name));
+    if (!accColNames.has('request_count')) {
+      db.exec(`ALTER TABLE accounts ADD COLUMN request_count INTEGER DEFAULT 0`);
+      db.exec(`UPDATE accounts SET request_count = (SELECT COUNT(*) FROM request_logs WHERE request_logs.account_id = accounts.id)`);
+      console.log('[DB] Added request_count to accounts, backfilled from request_logs');
+    }
   } catch (err: any) {
     if (!err.message.includes('duplicate column name')) {
       console.error('[DB] Migration error:', err);
