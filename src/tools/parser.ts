@@ -77,78 +77,6 @@ function repairJson(json: string): string {
   return repaired;
 }
 
-// 预处理 JSON 字符串，修复无效的转义序列
-function preprocessJsonString(text: string): string {
-  // JSON 标准只允许以下转义序列：
-  // " \ / \b \f \n \r \t \uXXXX
-  // 其他如 \' 都是无效的
-
-  const result: string[] = [];
-  let inString = false;
-  let i = 0;
-
-  while (i < text.length) {
-    const ch = text[i];
-
-    if (inString) {
-      if (ch === '\\') {
-        // 处理转义序列
-        if (i + 1 < text.length) {
-          const next = text[i + 1];
-          // 有效的 JSON 转义序列
-          if ('"\\/bfnrt'.includes(next)) {
-            result.push(ch, next);
-            i += 2;
-          } else if (next === 'u') {
-            // \uXXXX 格式
-            result.push(ch, next);
-            i += 2;
-            // 读取 4 个十六进制字符
-            for (let j = 0; j < 4 && i < text.length && /[0-9a-fA-F]/.test(text[i]); j++) {
-              result.push(text[i]);
-              i++;
-            }
-          } else {
-            // 无效的转义序列（如 \'），移除反斜杠
-            result.push(next);
-            i += 2;
-          }
-        } else {
-          result.push(ch);
-          i++;
-        }
-      } else if (ch === '"') {
-        // 字符串结束
-        inString = false;
-        result.push(ch);
-        i++;
-      } else if (ch === '\n') {
-        // 字面量换行符，转义它
-        result.push('\\n');
-        i++;
-      } else if (ch === '\r') {
-        result.push('\\r');
-        i++;
-      } else if (ch === '\t') {
-        result.push('\\t');
-        i++;
-      } else {
-        result.push(ch);
-        i++;
-      }
-    } else {
-      // 不在字符串内
-      if (ch === '"') {
-        inString = true;
-      }
-      result.push(ch);
-      i++;
-    }
-  }
-
-  return result.join('');
-}
-
 // 更智能的 JSON 解析，处理包含换行符的字符串
 function parseJsonSafely(text: string): any {
   try {
@@ -159,38 +87,33 @@ function parseJsonSafely(text: string): any {
       // 尝试修复后解析
       return JSON.parse(repairJson(text));
     } catch (secondError) {
-      try {
-        // 预处理无效转义序列后解析
-        const preprocessed = preprocessJsonString(text);
-        return JSON.parse(preprocessed);
-      } catch (thirdError) {
-        try {
-          // 预处理 + repairJson
-          const preprocessed = preprocessJsonString(text);
-          return JSON.parse(repairJson(preprocessed));
-        } catch (fourthError) {
-          // 如果还是失败，尝试更激进的修复
-          let fixed = text;
-
-          // 匹配 "key": "value" 模式，其中 value 可能包含未转义的换行符
-          fixed = fixed.replace(/"([^"\\]*(?:\\.[^"\\]*)*)"/g, (match, content) => {
-            if (!content.includes('\n') && !content.includes('\r') && !content.includes('\t')) {
-              return match;
-            }
-            const escaped = content
-              .replace(/\n/g, '\\n')
-              .replace(/\r/g, '\\r')
-              .replace(/\t/g, '\\t');
-            return `"${escaped}"`;
-          });
-
-          try {
-            return JSON.parse(fixed);
-          } catch (fifthError) {
-            const noNewlines = text.replace(/([^\\])\n/g, '$1\\n').replace(/([^\\])\r/g, '$1\\r');
-            return JSON.parse(noNewlines);
-          }
+      // 如果还是失败，尝试更激进的修复：
+      // 找到所有字符串值，并确保它们被正确转义
+      let fixed = text;
+      
+      // 匹配 "key": "value" 模式，其中 value 可能包含未转义的换行符
+      // 使用负向后查找确保引号前没有反斜杠
+      fixed = fixed.replace(/"([^"\\]*(?:\\.[^"\\]*)*)"/g, (match, content) => {
+        // 如果内容已经被正确转义，直接返回
+        if (!content.includes('\n') && !content.includes('\r') && !content.includes('\t')) {
+          return match;
         }
+        
+        // 否则，重新转义
+        const escaped = content
+          .replace(/\n/g, '\\n')
+          .replace(/\r/g, '\\r')
+          .replace(/\t/g, '\\t');
+        
+        return `"${escaped}"`;
+      });
+      
+      try {
+        return JSON.parse(fixed);
+      } catch (thirdError) {
+        // 最后尝试：移除所有实际的换行符，只保留转义的
+        const noNewlines = text.replace(/([^\\])\n/g, '$1\\n').replace(/([^\\])\r/g, '$1\\r');
+        return JSON.parse(noNewlines);
       }
     }
   }

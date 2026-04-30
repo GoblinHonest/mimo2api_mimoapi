@@ -23,17 +23,76 @@ function normalizeTool(t: ToolDefinition): NormalizedTool {
   return { name: t.name!, description: t.description, parameters: t.input_schema };
 }
 
+// 递归生成参数 schema 描述，保留嵌套结构
+function formatSchemaForPrompt(
+  schema: Record<string, unknown> | undefined,
+  indent: number = 0
+): string {
+  if (!schema) return '';
+  const type = schema.type as string;
+  const pad = '  '.repeat(indent);
+
+  if (type === 'object' && schema.properties) {
+    const required = (schema.required as string[]) ?? [];
+    const props = schema.properties as Record<string, Record<string, unknown>>;
+    const lines = Object.entries(props).map(([name, prop]) => {
+      const req = required.includes(name) ? '*' : '';
+      const pType = (prop.type as string) ?? 'any';
+      const desc = prop.description ? ` // ${prop.description}` : '';
+      if (pType === 'object' && prop.properties) {
+        const nested = formatSchemaForPrompt(prop, indent + 1);
+        return `${pad}  ${name}${req}: object {\n${nested}\n${pad}  }${desc}`;
+      }
+      if (pType === 'array' && prop.items) {
+        const items = prop.items as Record<string, unknown>;
+        const iType = (items.type as string) ?? 'any';
+        if (iType === 'object' && items.properties) {
+          const nested = formatSchemaForPrompt(items, indent + 1);
+          return `${pad}  ${name}${req}: array<object> [\n${nested}\n${pad}  ]${desc}`;
+        }
+        return `${pad}  ${name}${req}: array<${iType}>${desc}`;
+      }
+      return `${pad}  ${name}${req}: ${pType}${desc}`;
+    });
+    return lines.join('\n');
+  }
+
+  return `${pad}${type ?? 'any'}`;
+}
+
 export function buildToolSystemPrompt(tools: ToolDefinition[]): string {
   const toolDescs = tools.map(t => {
     const fn = normalizeTool(t);
-    const required = (fn.parameters?.required as string[] ?? []);
-    const props = fn.parameters?.properties as Record<string, { type?: string; description?: string }> | undefined;
-    const paramLine = props
-      ? Object.entries(props).map(([k, v]) => `${k}${required.includes(k) ? '*' : ''}:${v.type ?? 'any'}`).join(', ')
-      : '';
-    const desc = (fn.description ?? '').split('\n')[0].slice(0, 80);
-    return `${fn.name}(${paramLine})`;
-  }).join(', ');
+    const props = fn.parameters?.properties as Record<string, Record<string, unknown>> | undefined;
+    let paramBlock: string;
+    if (props) {
+      const required = (fn.parameters?.required as string[]) ?? [];
+      const lines = Object.entries(props).map(([name, prop]) => {
+        const req = required.includes(name) ? '*' : '';
+        const pType = (prop.type as string) ?? 'any';
+        const desc = prop.description ? ` // ${prop.description}` : '';
+        if (pType === 'object' && prop.properties) {
+          const nested = formatSchemaForPrompt(prop, 1);
+          return `  ${name}${req}: object {\n${nested}\n  }${desc}`;
+        }
+        if (pType === 'array' && prop.items) {
+          const items = prop.items as Record<string, unknown>;
+          const iType = (items.type as string) ?? 'any';
+          if (iType === 'object' && items.properties) {
+            const nested = formatSchemaForPrompt(items, 1);
+            return `  ${name}${req}: array<object> [\n${nested}\n  ]${desc}`;
+          }
+          return `  ${name}${req}: array<${iType}>${desc}`;
+        }
+        return `  ${name}${req}: ${pType}${desc}`;
+      });
+      paramBlock = `\n${lines.join('\n')}`;
+    } else {
+      paramBlock = '';
+    }
+    const desc = fn.description ? ` // ${fn.description.split('\n')[0].slice(0, 80)}` : '';
+    return `## ${fn.name}${desc}${paramBlock}`;
+  }).join('\n\n');
 
   return `[工具调用格式 - 必须严格遵守]
 <tool_call>
