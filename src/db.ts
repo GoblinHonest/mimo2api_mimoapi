@@ -13,10 +13,6 @@ export function initDb() {
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
 
-  // 启动时重置所有 active_requests，防止重启后计数卡住
-  db.prepare('UPDATE accounts SET active_requests = 0').run();
-  console.log('[DB] Reset all accounts active_requests to 0');
-
   db.exec(`
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
@@ -75,6 +71,10 @@ export function initDb() {
       value TEXT NOT NULL
     );
   `);
+
+  // 启动时重置所有 active_requests，防止重启后计数卡住
+  db.prepare('UPDATE accounts SET active_requests = 0').run();
+  console.log('[DB] Reset all accounts active_requests to 0');
 
   // 迁移：添加 last_message_fingerprint 列（如果不存在）
   try {
