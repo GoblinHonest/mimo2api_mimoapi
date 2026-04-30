@@ -338,14 +338,29 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
       break;
     }
 
-    const toolCallName = block[1]; // 从 <tool_call name="..."> 或 <toolcall id="..."> 提取的名称
+    let toolCallName = block[1]; // 从 <tool_call name="..."> 或 <toolcall id="..."> 提取的名称
     let inner = block[2].trim();
+
+    // 如果没有从属性中获取到名称，尝试从内部第一个标签提取
+    // 例如: <toolcall><attempt_completion>...</attempt_completion></toolcall>
+    if (!toolCallName) {
+      const innerTagMatch = inner.match(/^<([a-zA-Z_][\w-]*)(?:\s[^>]*)?>([\s\S]*?)<\/\1>\s*$/);
+      if (innerTagMatch) {
+        const candidateName = innerTagMatch[1];
+        const reserved = ['parameter', 'arg', 'name', 'function', 'tool_call', 'tool_result', 'arguments', 'parameters', 'input', 'invoke', 'tool_name'];
+        if (!reserved.includes(candidateName.toLowerCase())) {
+          toolCallName = candidateName;
+          inner = innerTagMatch[2].trim();
+          log('info', `Extracted tool name from inner tag: ${toolCallName}`);
+        }
+      }
+    }
 
     console.log('[PARSE:DEBUG] Found tool_call block:', {
       toolCallName,
       innerLength: inner.length,
       innerPreview: inner.slice(0, 200),
-      innerRaw: JSON.stringify(inner.slice(0, 150))  // 添加原始字符串表示
+      innerRaw: JSON.stringify(inner.slice(0, 150))
     });
 
     // 移除可能的 tool_result 包装
@@ -414,7 +429,19 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
 
     // 尝试 XML 格式
     let name = toolCallName || extractName(inner);
-    
+
+    //   → name="read", inner 需要解包 <read> 标签
+    if (name && !toolCallName) {
+      const unwrapRe = new RegExp(
+        `^\\s*<${name}(?:\\s[^>]*)?>([\\s\\S]*)<\\/${name}>\\s*$`, 'i'
+      );
+      const unwrapped = inner.match(unwrapRe);
+      if (unwrapped) {
+        inner = unwrapped[1].trim();
+        log('info', `Unwrapped <${name}> tag from inner content`);
+      }
+    }
+
     // 如果还是没有名称，尝试从 arguments 推断
     if (!name) {
       // 先提取 arguments 看看能否推断
@@ -603,7 +630,7 @@ function parseDirectToolNameFormat(text: string): ParsedToolCall[] {
   let match: RegExpExecArray | null;
   let count = 0;
 
-  const excludedTags = ['div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u', 'todo', 'todo_list'];
+  const excludedTags = ['div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u', 'todo', 'todo_list', 'thinking', 'result', 'task_progress', 'path', 'name', 'content', 'question', 'options'];
 
   while ((match = directToolRe.exec(cleanText)) !== null) {
     if (++count > CONFIG.MAX_TOOL_CALLS) {
@@ -837,7 +864,7 @@ export function hasToolCallMarker(text: string): boolean {
   if (match) {
     const tagName = match[1].toLowerCase();
     // 排除常见的 HTML/Markdown 标签
-    const excludedTags = ['div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u'];
+    const excludedTags = ['div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u', 'thinking', 'result', 'task_progress', 'path', 'name', 'content', 'question', 'options'];
     if (!excludedTags.includes(tagName)) {
       return true;
     }

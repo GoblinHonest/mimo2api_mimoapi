@@ -272,6 +272,7 @@ export function registerOpenAI(app: Hono) {
             let thinkBuf = '';
             let toolCallBuf: string | null = null;
             let pendingText = '';
+            let contentBuf = ''; // 缓存所有 content，finish 时决定是否发送
 
             for await (const chunk of gen) {
               if (isAborted) { console.log('[STREAM] Aborted, stopping generation'); break; }
@@ -305,6 +306,10 @@ export function registerOpenAI(app: Hono) {
                   text = text.replace(/<think>[\s\S]*?<\/think>/g, '');
                   const t2Idx = text.indexOf('<think>');
                   if (t2Idx !== -1) text = text.slice(0, t2Idx);
+                  // Also strip XML-style <thinking> blocks (MiMo sometimes outputs these)
+                  text = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
+                  const t3Idx = text.indexOf('<thinking>');
+                  if (t3Idx !== -1) text = text.slice(0, t3Idx);
                   if (!text) continue;
                   
                   if (toolCallBuf !== null) {
@@ -331,8 +336,8 @@ export function registerOpenAI(app: Hono) {
                     let fc4 = -1;
                     if (directToolMatch) {
                       const tagName = directToolMatch[1].toLowerCase();
-                      // 排除常见的 HTML/Markdown 标签
-                      const excludedTags = ['div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u'];
+                      // 排除常见的 HTML/Markdown 标签和 MiMo 内部标签
+                      const excludedTags = ['div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u', 'thinking', 'result', 'task_progress', 'path', 'name', 'content', 'question', 'options'];
                       if (!excludedTags.includes(tagName)) {
                         fc4 = pendingText.indexOf(directToolMatch[0]);
                       }
@@ -407,8 +412,8 @@ export function registerOpenAI(app: Hono) {
                       }
 
                       if (before) {
-                        console.log('[STREAM:DEBUG] Sending before text:', before);
-                        await sendDelta({ content: before });
+                        console.log('[STREAM:DEBUG] Buffering before text:', before);
+                        contentBuf += before;
                       }
                       toolCallBuf = toolCallStart;
                       pendingText = '';
@@ -426,7 +431,7 @@ export function registerOpenAI(app: Hono) {
                       }
 
                       const safe = pendingText.slice(0, Math.max(0, pendingText.length - safeBufferSize));
-                      if (safe) await sendDelta({ content: safe });
+                      if (safe) contentBuf += safe;
                       pendingText = pendingText.slice(safe.length);
                     }
                   }
@@ -436,12 +441,13 @@ export function registerOpenAI(app: Hono) {
               } else if (chunk.type === 'finish') {
                 if (!pastThink && thinkingStarted) {
                   pastThink = true;
-                  if (config.thinkMode === 'passthrough') await sendDelta({ content: '<think>' + thinkBuf + '</think>' });
+                  // 不在这里发送 thinking，先缓存到 contentBuf
+                  if (config.thinkMode === 'passthrough') contentBuf += '<think>' + thinkBuf + '</think>';
                 }
                 if (pendingText) {
                   if (toolCallBuf !== null) toolCallBuf += pendingText;
                   else if (hasToolCallMarker(pendingText)) toolCallBuf = pendingText;
-                  else await sendDelta({ content: pendingText });
+                  else contentBuf += pendingText;
                   pendingText = '';
                 }
 
@@ -456,44 +462,52 @@ export function registerOpenAI(app: Hono) {
                   total_tokens: lastUsage.totalTokens, completion_tokens_details: { reasoning_tokens: lastUsage.reasoningTokens },
                 } : undefined;
                 let finishReason = 'stop';
+                // 只有当客户端请求中包含 tools 时，才转换为原生 tool_calls 格式
+                // 否则将工具调用 XML 作为普通文本返回（让客户端自己解析）
+                const shouldConvertToToolCalls = !!tools;
+
                 if (toolCallBuf && hasToolCallMarker(toolCallBuf)) {
-                  const calls = parseToolCalls(toolCallBuf);
-                  if (calls.length > 0) {
-                    finishReason = 'tool_calls';
-                    await sendDelta({ tool_calls: toOpenAIToolCalls(calls).map((tc, i) => ({ index: i, ...tc })) });
-                  } else {
-                    // 解析失败，但有工具调用标记，可能是格式问题
-                    // 尝试提取工具调用之前的文本
-                    const toolCallStart = Math.min(
-                      toolCallBuf.indexOf('<toolcall') !== -1 ? toolCallBuf.indexOf('<toolcall') : Infinity,
-                      toolCallBuf.indexOf('<tool_call') !== -1 ? toolCallBuf.indexOf('<tool_call') : Infinity,
-                      toolCallBuf.indexOf('<function_calls>') !== -1 ? toolCallBuf.indexOf('<function_calls>') : Infinity
-                    );
-                    if (toolCallStart !== Infinity && toolCallStart > 0) {
-                      // 有工具调用之前的文本，发送它
-                      await sendDelta({ content: toolCallBuf.slice(0, toolCallStart) });
+                  if (shouldConvertToToolCalls) {
+                    // 客户端请求了原生工具调用，转换为 OpenAI 格式
+                    const calls = parseToolCalls(toolCallBuf);
+                    if (calls.length > 0) {
+                      finishReason = 'tool_calls';
+                      const openaiCalls = toOpenAIToolCalls(calls);
+                      await sendDelta({ tool_calls: openaiCalls.map((tc, i) => ({ index: i, ...tc })) });
                     } else {
-                      // 没有找到工具调用起始位置，发送全部内容
-                      await sendDelta({ content: toolCallBuf });
+                      // 解析失败，将内容缓存到 contentBuf
+                      contentBuf += toolCallBuf;
                     }
+                  } else {
+                    // 客户端没有请求原生工具调用（如 Cline XML 模式），
+                    // 将工具调用 XML 作为普通文本返回
+                    console.log('[STREAM] Client did not send tools, returning tool call XML as text');
+                    contentBuf += toolCallBuf;
                   }
                 } else if (toolCallBuf) {
                   // toolCallBuf 存在但没有工具调用标记，可能是 bash 命令
-                  const bashDetection = detectAndConvertBashCommands(toolCallBuf);
-                  if (bashDetection.hasBashCommand && bashDetection.convertedText) {
-                    console.log('[STREAM:DEBUG] Detected bash command, converting to tool call');
-                    const calls = parseToolCalls(bashDetection.convertedText);
-                    if (calls.length > 0) {
-                      finishReason = 'tool_calls';
-                      await sendDelta({ tool_calls: toOpenAIToolCalls(calls).map((tc, i) => ({ index: i, ...tc })) });
+                  if (shouldConvertToToolCalls) {
+                    const bashDetection = detectAndConvertBashCommands(toolCallBuf);
+                    if (bashDetection.hasBashCommand && bashDetection.convertedText) {
+                      console.log('[STREAM:DEBUG] Detected bash command, converting to tool call');
+                      const calls = parseToolCalls(bashDetection.convertedText);
+                      if (calls.length > 0) {
+                        finishReason = 'tool_calls';
+                        const openaiCalls = toOpenAIToolCalls(calls);
+                        await sendDelta({ tool_calls: openaiCalls.map((tc, i) => ({ index: i, ...tc })) });
+                      } else {
+                        contentBuf += toolCallBuf;
+                      }
                     } else {
-                      // 转换失败，发送原始内容
-                      await sendDelta({ content: toolCallBuf });
+                      contentBuf += toolCallBuf;
                     }
                   } else {
-                    // 不是 bash 命令，发送原始内容
-                    await sendDelta({ content: toolCallBuf });
+                    contentBuf += toolCallBuf;
                   }
+                }
+                // 如果没有工具调用，发送缓存的 content
+                if (finishReason !== 'tool_calls' && contentBuf) {
+                  await sendDelta({ content: contentBuf });
                 }
                 await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage: usageChunk })}\n\n`);
                 await s.write('data: [DONE]\n\n');
@@ -541,7 +555,8 @@ export function registerOpenAI(app: Hono) {
         total_tokens: lastUsage.totalTokens, completion_tokens_details: { reasoning_tokens: lastUsage.reasoningTokens },
       } : undefined;
 
-      if (hasToolCallMarker(fullText)) {
+      // 只有当客户端请求中包含 tools 时，才转换为原生 tool_calls 格式
+      if (tools && hasToolCallMarker(fullText)) {
         const calls = parseToolCalls(fullText);
         if (calls.length > 0) {
           return c.json({

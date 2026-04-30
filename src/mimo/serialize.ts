@@ -2,7 +2,14 @@ import { config } from '../config.js';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  content: string | null;
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string;
+  name?: string;
 }
 
 /**
@@ -32,6 +39,7 @@ export function isHistoryContaminated(messages: ChatMessage[]): boolean {
   const assistantMessages = messages.filter(m => m.role === 'assistant');
 
   for (const msg of assistantMessages) {
+    if (!msg.content) continue;
     for (const tag of SYSTEM_TAGS) {
       if (msg.content.includes(`<${tag}>`)) {
         console.log('[SERIALIZE] ⚠️ Contamination detected in assistant message:', {
@@ -49,7 +57,8 @@ export function isHistoryContaminated(messages: ChatMessage[]): boolean {
 /**
  * 清理消息内容中的系统内部标签，防止 MiMo 学习和模仿这些标签
  */
-function sanitizeContent(content: string, role: string): string {
+function sanitizeContent(content: string | null, role: string): string {
+  if (content === null || content === undefined) return '';
   // 只清理 tool 角色的消息，因为这些消息包含系统内部标签
   if (role !== 'tool') return content;
 
@@ -79,6 +88,30 @@ function sanitizeContent(content: string, role: string): string {
   return cleaned;
 }
 
+/**
+ * 格式化单条消息用于对话历史，保留工具调用上下文
+ */
+function formatMessageForHistory(m: ChatMessage): string {
+  // assistant 消息带 tool_calls：显示工具调用信息
+  if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+    const callsStr = m.tool_calls.map(tc => {
+      const args = tc.function.arguments;
+      return `${tc.function.name}(${args})`;
+    }).join('\n');
+    const contentPart = m.content ? `\n${m.content}` : '';
+    return `assistant: [调用工具]\n${callsStr}${contentPart}`;
+  }
+
+  // tool 消息：显示工具结果
+  if (m.role === 'tool') {
+    const name = m.name || 'unknown';
+    return `[工具结果] ${name}:\n${m.content}`;
+  }
+
+  // 普通消息
+  return `${m.role}: ${m.content}`;
+}
+
 export function serializeMessages(messages: ChatMessage[]): string {
   // 先清理所有消息内容
   const sanitizedMessages = messages.map(m => ({
@@ -101,11 +134,11 @@ export function serializeMessages(messages: ChatMessage[]): string {
   const lastMsg = nonSystem[nonSystem.length - 1];
 
   if (dialogHistory.length > 0) {
-    const histStr = dialogHistory.map(m => `${m.role}: ${m.content}`).join('\n');
+    const histStr = dialogHistory.map(m => formatMessageForHistory(m)).join('\n');
     parts.push(`[对话历史]\n${histStr}`);
   }
 
-  if (lastMsg) parts.push(`[当前问题]\n${lastMsg.content}`);
+  if (lastMsg) parts.push(`[当前问题]\n${formatMessageForHistory(lastMsg)}`);
 
   // 强制截断以确保不超过 MiMo 限制
   const sysStr = sysContent ? `[系统指令]\n${sysContent}` : '';
@@ -138,8 +171,8 @@ export function serializeMessages(messages: ChatMessage[]): string {
   // 打印各部分大小
   console.log('[SERIALIZE] Message sizes:', {
     systemPrompt: finalSysStr.length,
-    dialogHistory: dialogHistory.length > 0 ? dialogHistory.map(m => `${m.role}: ${m.content}`).join('\n').length : 0,
-    lastMessage: lastMsg ? lastMsg.content.length : 0,
+    dialogHistory: dialogHistory.length > 0 ? dialogHistory.map(m => `${m.role}: ${m.content ?? ''}`).join('\n').length : 0,
+    lastMessage: lastMsg?.content?.length ?? 0,
     restStr: restStr.length,
     truncatedRest: truncatedRest.length,
     total: result.length,
