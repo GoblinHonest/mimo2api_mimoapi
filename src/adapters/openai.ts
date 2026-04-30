@@ -523,13 +523,11 @@ export function registerOpenAI(app: Hono) {
             loggedError = true;
           } finally {
             decrementActive(account.id);
-          }
-
-          if (!isAborted && !loggedError) {
-            logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
-            // 更新会话 token 统计
-            if (lastUsage) {
-              updateSessionTokens(session.id, lastUsage.promptTokens);
+            if (!loggedError) {
+              logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
+              if (lastUsage) {
+                updateSessionTokens(session.id, lastUsage.promptTokens);
+              }
             }
           }
         });
