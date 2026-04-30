@@ -41,7 +41,7 @@ npm install
 
 # 配置环境变量
 cp .env.example .env
-# 编辑 .env，至少修改 ADMIN_KEY
+# 编辑 .env，至少修改 ADMIN_KEY（默认管理密码为 admin）
 
 # 启动
 npm start        # 生产模式
@@ -49,6 +49,8 @@ npm run dev      # 开发模式（热重载）
 ```
 
 服务默认运行在 `http://localhost:8080`。
+
+> 管理面板默认密码：`admin`，登录后可修改。首次使用需在管理面板创建 API 密钥供客户端调用。
 
 ### Docker 部署
 
