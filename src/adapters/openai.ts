@@ -505,8 +505,8 @@ export function registerOpenAI(app: Hono) {
                     contentBuf += toolCallBuf;
                   }
                 }
-                // 如果没有工具调用，发送缓存的 content
-                if (finishReason !== 'tool_calls' && contentBuf) {
+                // 发送缓存的 content（OpenAI 格式允许 content 和 tool_calls 同时存在）
+                if (contentBuf) {
                   await sendDelta({ content: contentBuf });
                 }
                 await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage: usageChunk })}\n\n`);
@@ -557,9 +557,16 @@ export function registerOpenAI(app: Hono) {
       if (tools && hasToolCallMarker(fullText)) {
         const calls = parseToolCalls(fullText);
         if (calls.length > 0) {
+          // 提取工具调用之前的文本内容
+          const firstMarker = Math.min(
+            fullText.indexOf('<tool_call>') !== -1 ? fullText.indexOf('<tool_call>') : Infinity,
+            fullText.indexOf('<toolcall') !== -1 ? fullText.indexOf('<toolcall') : Infinity,
+            fullText.indexOf('<function_calls>') !== -1 ? fullText.indexOf('<function_calls>') : Infinity
+          );
+          const textContent = firstMarker !== Infinity && firstMarker > 0 ? fullText.slice(0, firstMarker).trim() : null;
           return c.json({
             id: responseId, object: 'chat.completion', created, model: mimoModel,
-            choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: toOpenAIToolCalls(calls) }, finish_reason: 'tool_calls' }],
+            choices: [{ index: 0, message: { role: 'assistant', content: textContent || null, tool_calls: toOpenAIToolCalls(calls) }, finish_reason: 'tool_calls' }],
             usage: usageObj,
           });
         }
