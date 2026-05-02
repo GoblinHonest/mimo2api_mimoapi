@@ -328,7 +328,8 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
   // 2. <tool_call name="ToolName">...</tool_call>
   // 3. <toolcall>...</toolcall> (小写，无下划线)
   // 4. <toolcall id="toolname">...</toolcall>
-  const blockRe = /<tool_?call(?:\s+(?:name|id)=["']([^"']+)["'])?>([\s\S]*?)<\/tool_?call>/gi;
+  // 兼容缺少闭合标签的情况（MiMo 流式输出可能截断 <tool_call>）
+  const blockRe = /<tool_?call(?:\s+(?:name|id)=["']([^"']+)["'])?>([\s\S]*?)(?:<\/tool_?call>|$)/gi;
   let block: RegExpExecArray | null;
   let count = 0;
 
