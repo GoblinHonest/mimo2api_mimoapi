@@ -1,7 +1,7 @@
 # MiMo Proxy
 
 [![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5+-3178C6.svg)](https://www.typescriptlang.org/)
 
 将小米 MiMo AI 转换为 OpenAI / Anthropic 兼容 API 的代理服务。支持多账号负载均衡、会话保持、Tool Calling，可直接对接各类 AI 编程客户端。
@@ -38,10 +38,6 @@ cd mimo2api_mimoapi
 
 # 安装依赖
 npm install
-
-# 配置环境变量
-cp .env.example .env
-# 编辑 .env，至少修改 ADMIN_KEY（默认管理密码为 admin）
 
 # 启动
 npm start        # 生产模式
@@ -138,19 +134,20 @@ curl http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-## 环境变量
+## 应用配置
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `PORT` | `8080` | 监听端口 |
-| `ADMIN_KEY` | `admin` | 管理面板密钥，**务必修改** |
-| `MAX_REPLAY_MESSAGES` | `20` | 会话回放消息数上限 |
-| `MAX_QUERY_CHARS` | `12000` | 单次请求最大字符数 |
-| `CONTEXT_RESET_THRESHOLD` | `0` | 超过此 token 数重置会话（0=不限） |
-| `MAX_CONCURRENT_PER_ACCOUNT` | `999999` | 单账号最大并发数 |
-| `THINK_MODE` | `separate` | 推理内容模式：`passthrough` / `strip` / `separate` |
-| `SESSION_TTL_DAYS` | `7` | 会话保留天数 |
-| `SESSION_ISOLATION` | `auto` | 会话隔离：`auto` / `manual` / `per-request` |
+配置通过 **Admin Web UI**（`http://localhost:8080/`）或 **Admin API** 管理，持久化存储在 SQLite 数据库中，`.env` 文件不会被读取。
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `adminKey` | `admin` | 管理面板密钥，**务必修改** |
+| `maxReplayMessages` | `20` | 会话回放消息数上限 |
+| `maxQueryChars` | `100000` | 单次请求最大字符数 |
+| `contextResetThreshold` | `150000` | 超过此 token 数重置会话（0=不限） |
+| `maxConcurrentPerAccount` | `99999` | 单账号最大并发数 |
+| `thinkMode` | `separate` | 推理内容模式 |
+| `sessionTtlDays` | `7` | 会话保留天数 |
+| `sessionIsolation` | `auto` | 会话隔离模式 |
 
 ### THINK_MODE
 
