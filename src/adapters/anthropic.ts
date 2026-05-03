@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { decrementActive } from '../accounts.js';
 import { callMimo, MimoUsage, fetchBotConfig } from '../mimo/client.js';
 import { serializeMessages, ChatMessage } from '../mimo/serialize.js';
@@ -176,7 +176,7 @@ export function registerAnthropic(app: Hono) {
     }
 
     const startTime = Date.now();
-    const msgId = `msg_${uuidv4().replace(/-/g, '')}`;
+    const msgId = `msg_${randomUUID().replace(/-/g, '')}`;
     console.log('[REQ] 🚀 Starting request processing...');
     let lastUsage: MimoUsage | null = null;
 

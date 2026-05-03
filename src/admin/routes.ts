@@ -12,7 +12,7 @@ import {
 import { listSessions, deleteSession } from '../mimo/session.js';
 import { db } from '../db.js';
 import { callMimo } from '../mimo/client.js';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 function saveSetting(key: string, value: string) {
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
 }
@@ -99,7 +99,7 @@ export function registerAdmin(app: Hono) {
     if (!account) return c.json({ error: 'Account not found' }, 404);
 
     try {
-      const convId = uuidv4().replace(/-/g, '');
+      const convId = randomUUID().replace(/-/g, '');
       let reply = '';
       for await (const chunk of callMimo(account, convId, 'hi', false)) {
         if (chunk.type === 'text') reply += chunk.content ?? '';

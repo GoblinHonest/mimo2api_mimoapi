@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 
 export interface ApiKey {
   id: string;
@@ -15,8 +15,8 @@ export interface ApiKey {
  * 创建新的 API 密钥
  */
 export function createApiKey(name?: string, customKey?: string): ApiKey {
-  const id = uuidv4();
-  const key = customKey || 'sk-' + uuidv4().replace(/-/g, '');
+  const id = randomUUID();
+  const key = customKey || 'sk-' + randomUUID().replace(/-/g, '');
   const created_at = new Date().toISOString();
 
   db.prepare(

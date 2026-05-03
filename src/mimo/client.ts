@@ -1,5 +1,5 @@
 import { Account } from '../accounts.js';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { MimoMedia } from './upload.js';
 
 export interface MimoUsage {
@@ -80,7 +80,7 @@ export async function* callMimo(
   multiMedias: MimoMedia[] = []
 ): AsyncGenerator<MimoChunk> {
   const body = {
-    msgId: uuidv4().replace(/-/g, '').slice(0, 32),
+    msgId: randomUUID().replace(/-/g, '').slice(0, 32),
     conversationId,
     query,
     modelConfig: {

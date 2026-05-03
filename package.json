@@ -16,14 +16,12 @@
     "@hono/node-server": "^1.19.11",
     "better-sqlite3": "^12.8.0",
     "hono": "^4.12.9",
-    "tsx": "^4.21.0",
-    "uuid": "^14.0.0"
+    "tsx": "^4.21.0"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.2.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
-    "@types/uuid": "^10.0.0",
     "daisyui": "^5.5.19",
     "tailwindcss": "^4.2.2",
     "typescript": "^6.0.2"

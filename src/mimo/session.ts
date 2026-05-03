@@ -1,5 +1,5 @@
 import { db } from '../db.js';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { config } from '../config.js';
 import { calculateMessageFingerprint } from './session-marker.js';
 import { isHistoryContaminated } from './serialize.js';
@@ -152,8 +152,8 @@ function createNewSession(accountId: string, clientSessionId: string, messageFin
   
   try {
     const transaction = db.transaction(() => {
-      const id = uuidv4();
-      const conversationId = uuidv4().replace(/-/g, '');
+      const id = randomUUID();
+      const conversationId = randomUUID().replace(/-/g, '');
       
       console.log('[SESSION] Deleting old sessions with same client_session_id...');
       // 先删除旧的同名 session（如果存在）

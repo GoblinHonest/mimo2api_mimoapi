@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 
 export interface Account {
   id: string;
@@ -20,8 +20,8 @@ export function createAccount(data: {
   user_id: string;
   ph_token: string;
 }) {
-  const id = uuidv4();
-  const api_key = 'sk-' + uuidv4().replace(/-/g, '');
+  const id = randomUUID();
+  const api_key = 'sk-' + randomUUID().replace(/-/g, '');
   db.prepare(
     `INSERT INTO accounts (id, alias, service_token, user_id, ph_token, api_key, created_at)
      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { decrementActive } from '../accounts.js';
 import { callMimo, MimoUsage, fetchBotConfig, getChatModels } from '../mimo/client.js';
 import { serializeMessages, ChatMessage } from '../mimo/serialize.js';
@@ -235,7 +235,7 @@ export function registerOpenAI(app: Hono) {
       console.log('[MIMO] Calling MiMo API...', { model: mimoModel, thinking: enableThinking, queryLength: query.length, hasMedia: medias.length > 0 });
 
       const gen = callMimo(account, conversationId, query, enableThinking, mimoModel, medias);
-      const responseId = `chatcmpl-${uuidv4().replace(/-/g, '')}`;
+      const responseId = `chatcmpl-${randomUUID().replace(/-/g, '')}`;
       const created = Math.floor(Date.now() / 1000);
 
       if (isStream) {
