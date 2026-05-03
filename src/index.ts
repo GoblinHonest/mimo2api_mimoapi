@@ -30,6 +30,12 @@ app.get('/style.css', (c) => {
   return c.body(css);
 });
 
+app.get('/chart.js', (c) => {
+  const js = readFileSync(join(__dirname, 'web', 'chart.js'), 'utf-8');
+  c.header('Content-Type', 'application/javascript');
+  return c.body(js);
+});
+
 // Health
 app.get('/health', (c) => c.json({ status: 'ok', ts: Date.now() }));
 

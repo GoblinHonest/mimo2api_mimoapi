@@ -1,4 +1,8 @@
 @import "tailwindcss";
-@plugin "daisyui" {
-  themes: night, light;
+
+@theme {
+  --color-brand: #6366f1;
+  --color-surface: #1e2130;
+  --color-border: #2d3148;
+  --color-bg: #0f1117;
 }
