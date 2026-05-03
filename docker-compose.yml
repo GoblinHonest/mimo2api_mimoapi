@@ -8,8 +8,6 @@ services:
     volumes:
       - ./data:/app/data
       - ./dbdata:/app/dbdata
-    env_file:
-      - .env
     restart: unless-stopped
     environment:
       - NODE_ENV=production

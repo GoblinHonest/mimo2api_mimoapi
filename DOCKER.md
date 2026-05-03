@@ -2,29 +2,19 @@
 
 ## 快速开始
 
-### 1. 配置环境变量
-
-复制环境变量模板：
-```bash
-cp .env.example .env
-```
-
-编辑 `.env` 文件，至少修改：
-- `ADMIN_KEY`: 管理员密钥（必须修改）
-
-### 2. 构建并启动
+### 1. 构建并启动
 
 ```bash
 docker-compose up -d
 ```
 
-### 3. 查看日志
+### 2. 查看日志
 
 ```bash
 docker-compose logs -f
 ```
 
-### 4. 停止服务
+### 3. 停止服务
 
 ```bash
 docker-compose down
@@ -32,9 +22,9 @@ docker-compose down
 
 ## 数据持久化
 
-数据库文件会挂载到宿主机：
-- `./data` - 数据目录
-- `./mimo-proxy.db` - SQLite 数据库文件
+数据目录会挂载到宿主机：
+- `./data` - 应用数据目录
+- `./dbdata` - SQLite 数据库目录（含 `mimo-proxy.db`）
 
 ## 端口配置
 
@@ -65,7 +55,6 @@ docker run -d \
   --name mimo-proxy \
   -p 8080:8080 \
   -v $(pwd)/data:/app/data \
-  -v $(pwd)/mimo-proxy.db:/app/mimo-proxy.db \
-  --env-file .env \
+  -v $(pwd)/dbdata:/app/dbdata \
   mimo-proxy
 ```
