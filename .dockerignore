@@ -6,8 +6,4 @@ dist
 *.db
 *.db-shm
 *.db-wal
-.env
 .claude
-PARSER_IMPROVEMENTS.md
-test-session-flow.md
-日志.log
