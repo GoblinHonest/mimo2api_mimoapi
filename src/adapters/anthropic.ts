@@ -64,12 +64,13 @@ function resolveModel(model: string): string {
 function logRequest(data: {
   account_id: string;
   api_key_id: string | null;
+  model: string;
   usage: MimoUsage | null;
   status: 'success' | 'error';
   error?: string;
   duration_ms: number;
 }) {
-  logApiRequest({ ...data, endpoint: 'anthropic', model: 'mimo-v2-pro' });
+  logApiRequest({ ...data, endpoint: 'anthropic' });
 }
 
 async function extractImagesAnthropic(account: Account, body: Record<string, unknown>): Promise<MimoMedia[]> {
@@ -238,7 +239,7 @@ export function registerAnthropic(app: Hono) {
             console.log('[STREAM] Waiting for MiMo response...');
             await sendEvent('message_start', {
               type: 'message_start',
-              message: { id: msgId, type: 'message', role: 'assistant', content: [], model: 'mimo-v2-pro', stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } },
+              message: { id: msgId, type: 'message', role: 'assistant', content: [], model: mimoModel, stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } },
             });
             let thinkBuf = '';
             let pastThink = false;
@@ -405,13 +406,13 @@ export function registerAnthropic(app: Hono) {
             if (!isAborted) {
               try { await sendEvent('error', { type: 'error', error: { type: 'api_error', message: String(err) } }); } catch {}
             }
-            logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, usage: lastUsage, status: 'error', error: String(err), duration_ms: Date.now() - startTime });
+            logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'error', error: String(err), duration_ms: Date.now() - startTime });
             loggedError = true;
           } finally {
             if (pingTimer) clearInterval(pingTimer);
             decrementActive(account.id);
             if (!loggedError) {
-              logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
+              logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
               if (lastUsage) {
                 updateSessionTokens(session.id, lastUsage.promptTokens);
               }
@@ -447,20 +448,20 @@ export function registerAnthropic(app: Hono) {
           for (const block of toAnthropicToolUse(calls)) content.push(block);
         }
       }
-      logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
+      logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
       // 更新会话 token 统计
       if (lastUsage) {
         updateSessionTokens(session.id, lastUsage.promptTokens);
       }
       return c.json({
         id: msgId, type: 'message', role: 'assistant', content,
-        model: 'mimo-v2-pro', stop_reason: stopReason, stop_sequence: null,
+        model: mimoModel, stop_reason: stopReason, stop_sequence: null,
         usage: { input_tokens: lastUsage?.promptTokens ?? 0, output_tokens: lastUsage?.completionTokens ?? 0 },
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       handleAccountError(account, msg);
-      logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, usage: null, status: 'error', error: msg, duration_ms: Date.now() - startTime });
+      logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: null, status: 'error', error: msg, duration_ms: Date.now() - startTime });
       return c.json({ type: 'error', error: { type: 'api_error', message: msg } }, 502);
     } finally {
       if (!isStream) decrementActive(account.id);
