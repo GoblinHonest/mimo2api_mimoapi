@@ -236,6 +236,11 @@ src/
 │   └── prompt.ts      #   工具定义注入系统提示词
 ├── admin/             # 管理面板 & REST API
 ├── middleware/        # 认证、限流等中间件
+├── web/               # 管理面板前端资源
+│   ├── index.html
+│   ├── style.css
+│   ├── input.css
+│   └── chart.js
 ├── config.ts          # 配置加载（数据库 → 内存）
 ├── db.ts              # SQLite 初始化
 ├── accounts.ts        # 多账号管理 & 负载均衡
