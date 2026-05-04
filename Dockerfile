@@ -19,6 +19,10 @@ COPY src ./src
 # 构建项目
 RUN npm run build
 
+# ★ 关键：在 builder 中就清理掉 devDependencies，这样 COPY 过去的 node_modules 就是干净的
+RUN npm prune --omit=dev && \
+    npm cache clean --force
+
 # ===== 运行阶段 =====
 FROM node:24-alpine
 
@@ -27,19 +31,14 @@ RUN apk add --no-cache dumb-init
 
 WORKDIR /app
 
-# 从构建阶段复制构建产物
-COPY --from=builder /app/dist ./dist
-
-# 从构建阶段复制 package 文件
+# 从构建阶段复制 package.json（用于 npm start 等元数据）
 COPY --from=builder /app/package.json ./
-COPY --from=builder /app/package-lock.json ./
 
-# 从构建阶段复制编译好的 node_modules（包含 native 模块）
+# 从构建阶段复制已清理的 node_modules（仅生产依赖 + 已编译的 native 模块）
 COPY --from=builder /app/node_modules ./node_modules
 
-# 清理不需要的 devDependencies 包，保留 native 模块
-RUN npm prune --omit=dev && \
-    npm cache clean --force
+# 从构建阶段复制构建产物
+COPY --from=builder /app/dist ./dist
 
 # 创建数据目录
 RUN mkdir -p /app/data /app/dbdata
