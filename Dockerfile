@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:24-alpine
 
 # 安装运行时依赖（dumb-init 用于正确处理信号）
 RUN apk add --no-cache dumb-init
@@ -12,7 +12,7 @@ COPY package.json package-lock.json ./
 COPY tsconfig.json ./
 COPY src ./src
 
-# 安装依赖 → 编译 → 裁剪 devDependencies（同一层，避免残留）
+# 安装依赖
 RUN apk add --no-cache python3 make g++ && \
     npm ci && \
     npm run build && \
@@ -24,7 +24,6 @@ RUN apk add --no-cache python3 make g++ && \
 RUN mkdir -p /app/data /app/dbdata
 
 # 环境变量
-ENV PORT=8080
 ENV NODE_ENV=production
 
 EXPOSE 8080
