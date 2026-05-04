@@ -1,9 +1,14 @@
 node_modules
 dist
 .git
+.github
 .gitignore
 *.log
 *.db
 *.db-shm
 *.db-wal
 .claude
+README.md
+docker-compose.yml
+LICENSE
+*.md
