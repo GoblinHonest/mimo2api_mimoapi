@@ -193,7 +193,27 @@ export function registerOpenAI(app: Hono) {
     console.log('[REQ] Body parsed:', { model: body.model || 'default', stream: body.stream ?? false, messages: body.messages?.length || 0, tools: body.tools?.length || 0, reasoning: !!body.reasoning_effort });
 
     const { messages: cleanedMsgs, medias } = await extractImages(account, body.messages ?? []);
-    const rawMessages: ChatMessage[] = cleanedMsgs as ChatMessage[];
+    let rawMessages: ChatMessage[] = cleanedMsgs as ChatMessage[];
+
+    // 处理 Anthropic 风格的 body.system 字段（OpenClaw 会通过此字段发送 system prompt）
+    if (body.system) {
+      let systemContent: string;
+      if (typeof body.system === 'string') {
+        systemContent = body.system;
+      } else if (Array.isArray(body.system)) {
+        // Anthropic 格式：[{"type":"text","text":"..."}]
+        systemContent = body.system
+          .filter((b: { type: string }) => b.type === 'text')
+          .map((b: { text?: string }) => b.text ?? '')
+          .join('\n');
+      } else {
+        systemContent = String(body.system);
+      }
+      if (systemContent) {
+        console.log('[REQ] Found body.system, injecting as system message:', systemContent.slice(0, 200) + '...');
+        rawMessages = [{ role: 'system', content: systemContent }, ...rawMessages];
+      }
+    }
     const tools: ToolDefinition[] | undefined = body.tools?.length ? body.tools : undefined;
     const isStream: boolean = body.stream ?? false;
     const enableThinking: boolean = !!body.reasoning_effort;
@@ -203,12 +223,8 @@ export function registerOpenAI(app: Hono) {
     if (tools) {
       console.log('[REQ] 🔧 Tools:', tools.map(t => t.name || (t as any).function?.name).join(', '));
       const toolPrompt = buildToolSystemPrompt(tools);
-      const sysIdx = messages.findIndex(m => m.role === 'system');
-      if (sysIdx >= 0) {
-        messages = messages.map((m, i) => i === sysIdx ? { ...m, content: m.content + '\n\n' + toolPrompt } : m);
-      } else {
-        messages = [{ role: 'system', content: toolPrompt }, ...messages];
-      }
+      // 工具定义作为单独的 system 消息，用 _toolPrompt 标记，不污染身份指令
+      messages = [{ role: 'system', content: toolPrompt, _toolPrompt: true }, ...messages];
     }
 
     console.log('[REQ] 🚀 Starting request processing...');
@@ -280,10 +296,6 @@ export function registerOpenAI(app: Hono) {
               if (chunk.type === 'text') {
                 let text = (chunk.content ?? '').replace(/\u0000/g, '');
 
-                // 调试：打印包含 toolcall 的文本
-                if (text.toLowerCase().includes('toolcall') || text.includes('<tool')) {
-                  console.log('[STREAM:DEBUG] Text chunk contains tool call marker:', text.slice(0, 200));
-                }
 
                 if (!pastThink && !thinkingStarted && text && !text.includes('<think>')) pastThink = true;
                 if (!pastThink) {
@@ -318,13 +330,6 @@ export function registerOpenAI(app: Hono) {
                     pendingText += text;
 
                     // 调试：记录 pendingText 的内容
-                    if (pendingText.includes('{') || pendingText.includes('action')) {
-                      console.log('[STREAM:DEBUG] pendingText contains { or action:', {
-                        length: pendingText.length,
-                        preview: pendingText.slice(Math.max(0, pendingText.length - 100))
-                      });
-                    }
-
                     // 检测各种工具调用格式的起始位置
                     const fc1 = pendingText.indexOf('<function_calls>');
                     const fc2 = pendingText.indexOf('<tool_call>');
@@ -380,10 +385,8 @@ export function registerOpenAI(app: Hono) {
                     }
 
                     if (fc5 !== -1) {
-                      console.log('[STREAM:DEBUG] Detected JSON tool call at position:', fc5, 'pendingText length:', pendingText.length);
                     }
                     if (fc6 !== -1) {
-                      console.log('[STREAM:DEBUG] Detected bash code block at position:', fc6, 'pendingText length:', pendingText.length);
                     }
 
                     const fcIdx = [fc1, fc2, fc3, fc4, fc5, fc6, fc7].filter(i => i !== -1).sort((a, b) => a - b)[0] ?? -1;
@@ -391,33 +394,25 @@ export function registerOpenAI(app: Hono) {
                       let before = pendingText.slice(0, fcIdx);
                       let toolCallStart = pendingText.slice(fcIdx);
 
-                      console.log('[STREAM:DEBUG] Tool call detected, before length:', before.length, 'preview:', before.slice(-50));
-
                       // 如果是 JSON 格式（fc5），检查前面是否有 ```json 标记
                       if (fcIdx === fc5 && before.endsWith('```json\n')) {
-                        // 将 ```json\n 也包含到 toolCallBuf 中，这样可以在解析时识别并去除
                         const markdownStart = before.lastIndexOf('```json\n');
                         before = pendingText.slice(0, markdownStart);
                         toolCallStart = pendingText.slice(markdownStart);
-                        console.log('[STREAM:DEBUG] Adjusted for ```json marker, new before length:', before.length);
                       } else if (fcIdx === fc5 && before.match(/```json\s*$/)) {
-                        // 处理 ```json 后面可能有空格的情况
                         const match = before.match(/(```json\s*)$/);
                         if (match) {
                           const markdownStart = before.length - match[1].length;
                           before = pendingText.slice(0, markdownStart);
                           toolCallStart = pendingText.slice(markdownStart);
-                          console.log('[STREAM:DEBUG] Adjusted for ```json marker (with spaces), new before length:', before.length);
                         }
                       }
 
                       if (before) {
-                        console.log('[STREAM:DEBUG] Buffering before text:', before);
                         contentBuf += before;
                       }
                       toolCallBuf = toolCallStart;
                       pendingText = '';
-                      console.log('[STREAM:DEBUG] Started toolCallBuf, length:', toolCallBuf.length, 'preview:', toolCallBuf.slice(0, 100));
                     } else {
                       // 增加 safe buffer 大小，避免 ```json 被分割
                       // 如果 pendingText 包含 ``` 但还没有完整的工具调用标记，保留更多字符
@@ -449,12 +444,6 @@ export function registerOpenAI(app: Hono) {
                   else if (hasToolCallMarker(pendingText)) toolCallBuf = pendingText;
                   else contentBuf += pendingText;
                   pendingText = '';
-                }
-
-                console.log('[STREAM:DEBUG] Finish event, toolCallBuf:', toolCallBuf ? toolCallBuf.slice(0, 500) : 'null');
-                if (toolCallBuf) {
-                  console.log('[STREAM:DEBUG] toolCallBuf full length:', toolCallBuf.length);
-                  console.log('[STREAM:DEBUG] hasToolCallMarker:', hasToolCallMarker(toolCallBuf));
                 }
 
                 const usageChunk = lastUsage ? {
@@ -489,7 +478,6 @@ export function registerOpenAI(app: Hono) {
                   if (shouldConvertToToolCalls) {
                     const bashDetection = detectAndConvertBashCommands(toolCallBuf);
                     if (bashDetection.hasBashCommand && bashDetection.convertedText) {
-                      console.log('[STREAM:DEBUG] Detected bash command, converting to tool call');
                       const calls = parseToolCalls(bashDetection.convertedText);
                       if (calls.length > 0) {
                         finishReason = 'tool_calls';

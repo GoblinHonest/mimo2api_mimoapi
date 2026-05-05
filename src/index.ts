@@ -1,3 +1,4 @@
+import { getLogFilePath } from './logger.js';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -48,6 +49,7 @@ serve({ fetch: app.fetch, port: config.port }, () => {
   console.log(`MiMo Proxy running on http://localhost:${config.port}`);
   console.log(`Admin UI: http://localhost:${config.port}/`);
   console.log(`THINK_MODE: ${config.thinkMode}`);
+  console.log(`Log file: ${getLogFilePath()}`);
 });
 
 export default app;

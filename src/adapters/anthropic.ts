@@ -97,8 +97,22 @@ async function extractImagesAnthropic(account: Account, body: Record<string, unk
 
 function buildMessages(body: Record<string, unknown>): ChatMessage[] {
   const msgs: ChatMessage[] = [];
-  if (body.system && typeof body.system === 'string') {
-    msgs.push({ role: 'system', content: body.system });
+  if (body.system) {
+    let systemContent: string;
+    if (typeof body.system === 'string') {
+      systemContent = body.system;
+    } else if (Array.isArray(body.system)) {
+      // Anthropic 格式：[{"type":"text","text":"..."}]
+      systemContent = body.system
+        .filter((b: { type: string }) => b.type === 'text')
+        .map((b: { text?: string }) => b.text ?? '')
+        .join('\n');
+    } else {
+      systemContent = String(body.system);
+    }
+    if (systemContent) {
+      msgs.push({ role: 'system', content: systemContent });
+    }
   }
   const bodyMsgs = (body.messages as Array<{ role: string; content: unknown }>) ?? [];
   for (const m of bodyMsgs) {
@@ -158,6 +172,14 @@ export function registerAnthropic(app: Hono) {
 
     const body = await c.req.json();
     console.log('[REQ] Body parsed:', { model: body.model || 'default', stream: body.stream ?? false, messages: body.messages?.length || 0, tools: body.tools?.length || 0, thinking: body.thinking?.type === 'enabled' });
+
+    // 调试：打印原始请求中的消息角色和 system 字段
+    const rawRoles = (body.messages ?? []).map((m: { role: string }) => m.role);
+    console.log('[REQ] Raw message roles:', rawRoles);
+    if (body.system) {
+      const sysContent = typeof body.system === 'string' ? body.system : JSON.stringify(body.system);
+      console.log('[REQ] Anthropic body.system:', sysContent.slice(0, 300) + (sysContent.length > 300 ? '...' : ''));
+    }
     console.log('[ANT] tools:', JSON.stringify(body.tools?.map((t: Record<string,unknown>) => t.name ?? t.function) ?? null));
 
     const medias = await extractImagesAnthropic(account, body);
@@ -168,12 +190,8 @@ export function registerAnthropic(app: Hono) {
     let messages = buildMessages(body);
     if (tools) {
       const toolPrompt = buildToolSystemPrompt(tools);
-      const sysIdx = messages.findIndex(m => m.role === 'system');
-      if (sysIdx >= 0) {
-        messages = messages.map((m, i) => i === sysIdx ? { ...m, content: m.content + '\n\n' + toolPrompt } : m);
-      } else {
-        messages = [{ role: 'system', content: toolPrompt }, ...messages];
-      }
+      // 工具定义作为单独的 system 消息，用 _toolPrompt 标记，不污染身份指令
+      messages = [{ role: 'system', content: toolPrompt, _toolPrompt: true }, ...messages];
     }
 
     const startTime = Date.now();
@@ -259,7 +277,6 @@ export function registerAnthropic(app: Hono) {
 
               if (chunk.type === 'text') {
                 let text = (chunk.content ?? '').replace(/\u0000/g, '');
-                if (text) console.log('[DBG] chunk:', JSON.stringify(text.slice(0, 80)), 'pastThink:', pastThink, 'tcBuf:', toolCallBuf !== null);
                 if (!pastThink && !thinkingStarted && text && !text.includes('<think>')) {
                   pastThink = true;
                   if (!firstBlockSent) {
@@ -286,7 +303,6 @@ export function registerAnthropic(app: Hono) {
                     const afterThink = text.slice(closeIdx + 8).trimStart();
                     if (config.thinkMode === 'separate') {
                       if (thinkPart) {
-                        console.log('[DBG] Sending thinking_delta:', JSON.stringify(thinkPart.slice(0, 50)));
                         await sendEvent('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: thinkPart } });
                       }
                       await sendEvent('content_block_stop', { type: 'content_block_stop', index: 0 });
@@ -299,7 +315,6 @@ export function registerAnthropic(app: Hono) {
                   } else {
                     if (config.thinkMode === 'separate') {
                       if (text) {
-                        console.log('[DBG] Sending thinking_delta chunk:', JSON.stringify(text.slice(0, 50)));
                         await sendEvent('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: text } });
                       }
                     } else if (config.thinkMode === 'passthrough') {

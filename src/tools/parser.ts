@@ -253,6 +253,10 @@ function extractName(inner: string): string | null {
   m = inner.match(/<(?:name|function|tool_name)=["']?([^"'<>\s/]+)["']?/i);
   if (m) return m[1].trim();
 
+  // 2b. <function call: ToolName> 格式（MiMo 特有）
+  m = inner.match(/<function\s+call:\s*([^>]+)>/i);
+  if (m) return m[1].trim();
+
   // 3. JSON 格式中的 name 字段 - 尝试更激进的修复
   if (inner.includes('"name"') || inner.includes("'name'")) {
     try {
@@ -357,12 +361,6 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
       }
     }
 
-    console.log('[PARSE:DEBUG] Found tool_call block:', {
-      toolCallName,
-      innerLength: inner.length,
-      innerPreview: inner.slice(0, 200),
-      innerRaw: JSON.stringify(inner.slice(0, 150))
-    });
 
     // 移除可能的 tool_result 包装
     inner = inner.replace(/^<tool_result>\s*/i, '').replace(/\s*<\/tool_result>$/i, '');
@@ -403,19 +401,10 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
     if (lines.length >= 2 && lines[1].trim().startsWith('{')) {
       const possibleName = lines[0].trim();
       const jsonPart = lines.slice(1).join('\n').trim();
-      console.log('[PARSE:DEBUG] Trying special format:', {
-        possibleName,
-        toolCallName,
-        jsonPartPreview: jsonPart.slice(0, 100)
-      });
       try {
         const parsed = parseJsonSafely(jsonPart);
         if (typeof parsed === 'object' && parsed !== null) {
           const finalName = toolCallName || possibleName;
-          console.log('[PARSE:DEBUG] Successfully parsed special format:', {
-            name: finalName,
-            arguments: parsed
-          });
           calls.push({
             id: callId,
             name: finalName,
@@ -431,7 +420,15 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
     // 尝试 XML 格式
     let name = toolCallName || extractName(inner);
 
-    //   → name="read", inner 需要解包 <read> 标签
+    // 解包 <invoke name="...">...</invoke> 标签（MiMo 的 <function call: X> 格式）
+    const invokeMatch = inner.match(/<invoke\s+name=["']([^"']+)["']\s*>([\s\S]*?)<\/invoke>/i);
+    if (invokeMatch) {
+      inner = invokeMatch[2].trim();
+      if (!name) name = invokeMatch[1].trim();
+      log('info', `Unwrapped <invoke> tag, extracted name: ${name}`);
+    }
+
+    // 解包 <name>...</name> 标签
     if (name && !toolCallName) {
       const unwrapRe = new RegExp(
         `^\\s*<${name}(?:\\s[^>]*)?>([\\s\\S]*)<\\/${name}>\\s*$`, 'i'
@@ -543,10 +540,6 @@ function parseJsonToolCalls(text: string): ParsedToolCall[] {
             args = rest as Record<string, unknown>;
           }
 
-          console.log('[PARSE:DEBUG] Found JSON tool call:', {
-            action: parsed.action,
-            args
-          });
 
           calls.push({
             id: generateCallId(),
@@ -647,11 +640,6 @@ function parseDirectToolNameFormat(text: string): ParsedToolCall[] {
       continue;
     }
 
-    console.log('[PARSE:DEBUG] Found direct tool name format:', {
-      toolName,
-      innerLength: inner.length,
-      innerPreview: inner.slice(0, 200)
-    });
 
     const callId = generateCallId();
 
@@ -764,41 +752,34 @@ export function parseToolCalls(text: string): ParsedToolCall[] {
   // 清理不可见字符
   const cleanText = cleanInvisibleChars(text);
   
-  console.log('[PARSE:DEBUG] Tool call text preview:', cleanText.slice(0, 500));
-
   // 检测格式并解析
   let calls: ParsedToolCall[] = [];
 
   if (cleanText.includes('<tool_call') || cleanText.includes('<toolcall')) {
     calls = parseMimoNativeToolCalls(cleanText);
     log('info', `Parsed ${calls.length} MiMo native tool calls`);
-    console.log('[PARSE:DEBUG] Parsed calls:', JSON.stringify(calls, null, 2));
   } else if (cleanText.includes('<function_calls>')) {
     calls = parseAnthropicToolCalls(cleanText);
     log('info', `Parsed ${calls.length} Anthropic tool calls`);
-    console.log('[PARSE:DEBUG] Parsed calls:', JSON.stringify(calls, null, 2));
   } else if (cleanText.includes('{"action"') || cleanText.includes('{ "action"') ||
              (cleanText.includes('{') && cleanText.includes('"action"'))) {
     // JSON 格式 - 使用更宽松的检测，支持 { 和 "action" 之间有换行
     calls = parseJsonToolCalls(cleanText);
     if (calls.length > 0) {
       log('info', `Parsed ${calls.length} JSON format tool calls`);
-      console.log('[PARSE:DEBUG] Parsed calls:', JSON.stringify(calls, null, 2));
-    }
+      }
   } else if (cleanText.includes('"name"') && cleanText.includes('"arguments"')) {
     // {"name": "ToolName", "arguments": {...}} 格式（MiMo 未包裹 <tool_call> 时）
     calls = parseNamedJsonToolCalls(cleanText);
     if (calls.length > 0) {
       log('info', `Parsed ${calls.length} named JSON format tool calls`);
-      console.log('[PARSE:DEBUG] Parsed calls:', JSON.stringify(calls, null, 2));
-    }
+      }
   } else {
     // 尝试直接工具名格式
     calls = parseDirectToolNameFormat(cleanText);
     if (calls.length > 0) {
       log('info', `Parsed ${calls.length} direct tool name format calls`);
-      console.log('[PARSE:DEBUG] Parsed calls:', JSON.stringify(calls, null, 2));
-    }
+      }
   }
 
   // 终极回退：如果所有解析器都失败，尝试 {"name": "...", "arguments": {...}} 格式
@@ -806,8 +787,7 @@ export function parseToolCalls(text: string): ParsedToolCall[] {
     calls = parseNamedJsonToolCalls(cleanText);
     if (calls.length > 0) {
       log('info', `Parsed ${calls.length} named JSON format tool calls (fallback)`);
-      console.log('[PARSE:DEBUG] Parsed calls:', JSON.stringify(calls, null, 2));
-    }
+      }
   }
 
   // 验证结果
@@ -818,7 +798,6 @@ export function parseToolCalls(text: string): ParsedToolCall[] {
     }
     if (!call.arguments || typeof call.arguments !== 'object') {
       log('warn', 'Invalid tool call: missing or invalid arguments', call);
-      console.log('[PARSE:ERROR] Invalid arguments type:', typeof call.arguments, call.arguments);
       return false;
     }
     return true;

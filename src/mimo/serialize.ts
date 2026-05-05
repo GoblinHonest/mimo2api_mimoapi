@@ -10,6 +10,7 @@ export interface ChatMessage {
   }>;
   tool_call_id?: string;
   name?: string;
+  _toolPrompt?: boolean;
 }
 
 /**
@@ -119,15 +120,28 @@ export function serializeMessages(messages: ChatMessage[]): string {
     content: sanitizeContent(m.content, m.role)
   }));
 
-  const system = sanitizedMessages.filter(m => m.role === 'system');
+  // 分离：身份指令（普通 system）和工具定义（_toolPrompt 标记）
+  const identitySystem = sanitizedMessages.filter(m => m.role === 'system' && !m._toolPrompt);
+  const toolPromptSystem = sanitizedMessages.find(m => m.role === 'system' && m._toolPrompt);
+  const identityContent = identitySystem.map(m => m.content).join('\n').trim();
+  const toolContent = (toolPromptSystem?.content ?? '').trim();
   const rest = sanitizedMessages.filter(m => m.role !== 'system');
   const truncated = rest.slice(-config.maxReplayMessages);
-  const msgs = [...system, ...truncated];
+  const msgs = [...identitySystem, ...truncated];
 
   const parts: string[] = [];
 
-  const sysContent = system.map(m => m.content).join('\n');
-  if (sysContent) parts.push(`[系统指令]\n${sysContent}`);
+  // 身份指令：放在最前面，加强调前缀
+  if (identityContent) {
+    console.log('[SERIALIZE] Identity prompt content:', identityContent.slice(0, 500) + (identityContent.length > 500 ? '...' : ''));
+    parts.push(`[系统指令 - 你必须始终遵守以下身份和行为设定]\n${identityContent}`);
+  }
+
+  // 工具定义：单独一节，放在身份之后
+  if (toolContent) {
+    console.log('[SERIALIZE] Tool prompt content:', toolContent.slice(0, 300) + (toolContent.length > 300 ? '...' : ''));
+    parts.push(`[工具调用指令]\n${toolContent}`);
+  }
 
   const nonSystem = msgs.filter(m => m.role !== 'system');
   const dialogHistory = nonSystem.slice(0, -1);
@@ -140,41 +154,58 @@ export function serializeMessages(messages: ChatMessage[]): string {
 
   if (lastMsg) parts.push(`[当前问题]\n${formatMessageForHistory(lastMsg)}`);
 
-  // 强制截断以确保不超过 MiMo 限制
-  const sysStr = sysContent ? `[系统指令]\n${sysContent}` : '';
-  const restStr = parts.slice(sysContent ? 1 : 0).join('\n\n');
+  // === 分别计算各部分，独立截断 ===
+  const identityPrefix = '[系统指令 - 你必须始终遵守以下身份和行为设定]\n';
+  const toolPrefix = '[工具调用指令]\n';
+  const identityStr = identityContent ? `${identityPrefix}${identityContent}` : '';
+  const toolStr = toolContent ? `${toolPrefix}${toolContent}` : '';
 
-  // 计算剩余可用空间
-  let maxRest = config.maxQueryChars - sysStr.length - 2;
+  // 对话部分（不含身份和工具）
+  const dialogParts = parts.filter(p => !p.startsWith('[系统指令') && !p.startsWith('[工具调用'));
+  const dialogStr = dialogParts.join('\n\n');
 
-  // 如果 system prompt 本身就超长，需要截断它
-  let finalSysStr = sysStr;
-  if (sysStr.length > config.maxQueryChars * 0.6) {
-    // System prompt 最多占 60%
-    const maxSys = Math.floor(config.maxQueryChars * 0.6);
-    finalSysStr = sysStr.slice(0, maxSys) + '\n...(工具定义已截断)';
-    maxRest = config.maxQueryChars - finalSysStr.length - 2;
-    console.log('[SERIALIZE] ⚠️ System prompt truncated:', {
-      original: sysStr.length,
-      truncated: finalSysStr.length,
-      maxAllowed: maxSys
+  // 分配空间：身份 30%、工具 30%、对话 40%
+  const maxIdentity = Math.floor(config.maxQueryChars * 0.3);
+  const maxTool = Math.floor(config.maxQueryChars * 0.3);
+
+  // 截断身份指令
+  let finalIdentity = identityStr;
+  if (identityStr.length > maxIdentity) {
+    finalIdentity = identityStr.slice(0, maxIdentity) + '\n...(身份指令已截断)';
+    console.log('[SERIALIZE] ⚠️ Identity prompt truncated:', {
+      original: identityStr.length,
+      truncated: finalIdentity.length,
+      maxAllowed: maxIdentity
     });
   }
 
-  // 截断对话历史和当前消息
-  const truncatedRest = maxRest > 0 && restStr.length > maxRest
-    ? '...(历史消息已截断)\n\n' + restStr.slice(-maxRest + 30)
-    : restStr;
+  // 截断工具定义
+  let finalTool = toolStr;
+  if (toolStr.length > maxTool) {
+    finalTool = toolStr.slice(0, maxTool) + '\n...(工具定义已截断)';
+    console.log('[SERIALIZE] ⚠️ Tool prompt truncated:', {
+      original: toolStr.length,
+      truncated: finalTool.length,
+      maxAllowed: maxTool
+    });
+  }
 
-  const result = finalSysStr ? `${finalSysStr}\n\n${truncatedRest}` : truncatedRest;
+  // 剩余空间给对话
+  const usedSpace = finalIdentity.length + finalTool.length;
+  const maxDialog = config.maxQueryChars - usedSpace - 4;
+  const finalDialog = maxDialog > 0 && dialogStr.length > maxDialog
+    ? '...(历史消息已截断)\n\n' + dialogStr.slice(-maxDialog + 30)
+    : dialogStr;
+
+  // 组合最终结果
+  const resultParts = [finalIdentity, finalTool, finalDialog].filter(Boolean);
+  const result = resultParts.join('\n\n');
 
   // 打印各部分大小
   console.log('[SERIALIZE] Message sizes:', {
-    systemPrompt: finalSysStr.length,
-    dialogHistory: dialogHistory.length > 0 ? dialogHistory.map(m => `${m.role}: ${m.content ?? ''}`).join('\n').length : 0,
-    lastMessage: lastMsg?.content?.length ?? 0,
-    restStr: restStr.length,
-    truncatedRest: truncatedRest.length,
+    identity: finalIdentity.length,
+    toolPrompt: finalTool.length,
+    dialog: finalDialog.length,
     total: result.length,
     maxAllowed: config.maxQueryChars,
     exceeded: result.length > config.maxQueryChars

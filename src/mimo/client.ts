@@ -145,17 +145,15 @@ export async function* callMimo(
 
     for (const line of lines) {
       const trimmed = line.trim();
-      console.log('[MIMO:RAW]', line);
       if (trimmed.startsWith('event:')) {
         event = trimmed.slice(6).trim();
       } else if (trimmed.startsWith('data:')) {
         try {
           const data = JSON.parse(trimmed.slice(5).trim());
           if (event === 'message') {
-            console.log('[MIMO:DEBUG] Message event data:', JSON.stringify(data).slice(0, 500));
             yield { type: 'text', content: data.content ?? '' };
           } else if (event === 'usage') {
-            console.log('[MIMO:DEBUG] Usage event data:', JSON.stringify(data));
+            console.log('[MIMO] Usage:', JSON.stringify(data));
             yield {
               type: 'usage',
               usage: {
