@@ -19,13 +19,11 @@
   "type": "module",
   "dependencies": {
     "@hono/node-server": "^1.19.11",
-    "better-sqlite3": "^12.8.0",
     "chart.js": "^4.5.1",
     "hono": "^4.12.9"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.2.2",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
     "tailwindcss": "^4.2.2",
     "tsx": "^4.21.0",

@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { acquireAccount, decrementActive, markAccountInactive, Account } from '../accounts.js';
 import { validateApiKey, recordApiKeyUsage, ApiKey } from '../api-keys.js';
 import { config } from '../config.js';
-import { db } from '../db.js';
+import { appendLog, RequestLogRecord } from '../db.js';
 import { MimoUsage } from '../mimo/client.js';
 
 export interface RequestContext {
@@ -41,15 +41,23 @@ export function logApiRequest(data: {
   error?: string;
   duration_ms: number;
 }) {
-  db.prepare(
-    `INSERT INTO request_logs (id, account_id, session_id, api_key_id, endpoint, model, prompt_tokens, completion_tokens, reasoning_tokens, duration_ms, status, error, created_at)
-     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    randomUUID(), data.account_id, data.api_key_id, data.endpoint, data.model,
-    data.usage?.promptTokens ?? null, data.usage?.completionTokens ?? null,
-    data.usage?.reasoningTokens ?? null, data.duration_ms,
-    data.status, data.error ?? null, new Date().toLocaleString('sv-SE')
-  );
+  const log: RequestLogRecord = {
+    id: randomUUID(),
+    account_id: data.account_id,
+    session_id: null,
+    api_key_id: data.api_key_id,
+    endpoint: data.endpoint,
+    model: data.model,
+    prompt_tokens: data.usage?.promptTokens ?? null,
+    completion_tokens: data.usage?.completionTokens ?? null,
+    reasoning_tokens: data.usage?.reasoningTokens ?? null,
+    duration_ms: data.duration_ms,
+    status: data.status,
+    error: data.error ?? null,
+    created_at: new Date().toLocaleString('sv-SE'),
+  };
+
+  appendLog(log);
 }
 
 export function handleAccountError(account: Account, errorMsg: string) {

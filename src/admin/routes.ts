@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { config } from '../config.js';
+import { config, saveSetting } from '../config.js';
 import {
   listAccounts, createAccount, getAccountById,
   updateAccount, deleteAccount, parseCurl,
@@ -10,11 +10,34 @@ import {
   updateApiKey, deleteApiKey
 } from '../api-keys.js';
 import { listSessions, deleteSession } from '../mimo/session.js';
-import { db } from '../db.js';
+import { loadConfig, saveConfig, loadLogs, loadAccountData, RequestLogRecord, LOGS_PATH } from '../db.js';
 import { callMimo } from '../mimo/client.js';
 import { randomUUID } from 'crypto';
-function saveSetting(key: string, value: string) {
-  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+import { readdirSync, existsSync } from 'fs';
+import path from 'path';
+
+function getAllLogs(): RequestLogRecord[] {
+  if (!existsSync(LOGS_PATH)) return [];
+  const files = readdirSync(LOGS_PATH).filter((f: string) => f.endsWith('.json')).sort();
+  const allLogs: RequestLogRecord[] = [];
+  for (const file of files) {
+    const date = file.replace('.json', '');
+    allLogs.push(...loadLogs(date));
+  }
+  return allLogs;
+}
+
+function getLogsByDateRange(startDate: string, endDate: string): RequestLogRecord[] {
+  if (!existsSync(LOGS_PATH)) return [];
+  const files = readdirSync(LOGS_PATH).filter((f: string) => f.endsWith('.json')).sort();
+  const allLogs: RequestLogRecord[] = [];
+  for (const file of files) {
+    const date = file.replace('.json', '');
+    if (date >= startDate && date <= endDate) {
+      allLogs.push(...loadLogs(date));
+    }
+  }
+  return allLogs;
 }
 
 async function adminAuth(c: Parameters<Parameters<Hono['use']>[1]>[0], next: () => Promise<void>): Promise<void | Response> {
@@ -35,19 +58,26 @@ export function registerAdmin(app: Hono) {
     const limit = Math.min(Math.max(1, Number(c.req.query('limit') ?? 10)), 100);
     const offset = (page - 1) * limit;
 
-    const total = (db.prepare('SELECT COUNT(*) as cnt FROM accounts').get() as { cnt: number }).cnt;
-    const accounts = db.prepare(`
-      SELECT a.id, a.alias, a.user_id, a.service_token, a.ph_token, a.api_key,
-             a.is_active, a.active_requests, a.created_at,
-             COALESCE(COUNT(l.id), 0) as total_requests,
-             COALESCE(SUM(l.prompt_tokens), 0) as total_prompt_tokens,
-             COALESCE(SUM(l.completion_tokens), 0) as total_completion_tokens
-      FROM accounts a
-      LEFT JOIN request_logs l ON a.id = l.account_id
-      GROUP BY a.id
-      ORDER BY a.created_at DESC
-      LIMIT ? OFFSET ?
-    `).all(limit, offset);
+    const allAccounts = listAccounts();
+    const total = allAccounts.length;
+
+    const allLogs = getAllLogs();
+    const logsByAccount = new Map<string, RequestLogRecord[]>();
+    for (const log of allLogs) {
+      if (!logsByAccount.has(log.account_id)) logsByAccount.set(log.account_id, []);
+      logsByAccount.get(log.account_id)!.push(log);
+    }
+
+    const accounts = allAccounts.slice(offset, offset + limit).map(a => {
+      const logs = logsByAccount.get(a.id) || [];
+      return {
+        ...a,
+        total_requests: logs.length,
+        total_prompt_tokens: logs.reduce((sum, l) => sum + (l.prompt_tokens || 0), 0),
+        total_completion_tokens: logs.reduce((sum, l) => sum + (l.completion_tokens || 0), 0),
+      };
+    });
+
     return c.json({ accounts, total, page, limit });
   });
 
@@ -121,7 +151,9 @@ export function registerAdmin(app: Hono) {
   });
 
   admin.delete('/sessions', (c) => {
-    db.prepare('DELETE FROM sessions').run();
+    const configData = loadConfig();
+    configData.sessions = [];
+    saveConfig(configData);
     return c.json({ message: 'All sessions deleted' });
   });
 
@@ -133,15 +165,15 @@ export function registerAdmin(app: Hono) {
     const limit = Math.min(Number(c.req.query('limit') ?? 50), 200);
     const offset = (page - 1) * limit;
 
-    let sql = 'SELECT * FROM request_logs WHERE 1=1';
-    const params: unknown[] = [];
-    if (accountId) { sql += ' AND account_id = ?'; params.push(accountId); }
-    if (status) { sql += ' AND status = ?'; params.push(status); }
-    sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
+    let allLogs = getAllLogs();
 
-    const logs = db.prepare(sql).all(...params);
-    const total = (db.prepare('SELECT COUNT(*) as cnt FROM request_logs').get() as { cnt: number }).cnt;
+    if (accountId) allLogs = allLogs.filter(l => l.account_id === accountId);
+    if (status) allLogs = allLogs.filter(l => l.status === status);
+
+    allLogs.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const total = allLogs.length;
+    const logs = allLogs.slice(offset, offset + limit);
+
     return c.json({ logs, total, page, limit });
   });
 
@@ -151,30 +183,38 @@ export function registerAdmin(app: Hono) {
     const limit = Math.min(Math.max(1, Number(c.req.query('limit') ?? 10)), 100);
     const offset = (page - 1) * limit;
 
-    const totalAccounts = (db.prepare('SELECT COUNT(*) as cnt FROM accounts').get() as { cnt: number }).cnt;
-    const accounts = db.prepare(`
-      SELECT a.id, a.alias, a.api_key, a.is_active, a.active_requests,
-             COALESCE(SUM(l.prompt_tokens), 0) as total_prompt_tokens,
-             COALESCE(SUM(l.completion_tokens), 0) as total_completion_tokens,
-             COUNT(l.id) as total_requests
-      FROM accounts a
-      LEFT JOIN request_logs l ON a.id = l.account_id
-      GROUP BY a.id
-      LIMIT ? OFFSET ?
-    `).all(limit, offset);
+    const allAccounts = listAccounts();
+    const totalAccounts = allAccounts.length;
 
-    // 全量汇总（不受分页影响）
-    const totals = db.prepare(`
-      SELECT COALESCE(SUM(l.prompt_tokens), 0) as total_prompt_tokens,
-             COALESCE(SUM(l.completion_tokens), 0) as total_completion_tokens
-      FROM request_logs l
-    `).get() as { total_prompt_tokens: number; total_completion_tokens: number };
+    const allLogs = getAllLogs();
+    const logsByAccount = new Map<string, RequestLogRecord[]>();
+    for (const log of allLogs) {
+      if (!logsByAccount.has(log.account_id)) logsByAccount.set(log.account_id, []);
+      logsByAccount.get(log.account_id)!.push(log);
+    }
+
+    const accounts = allAccounts.slice(offset, offset + limit).map(a => {
+      const logs = logsByAccount.get(a.id) || [];
+      return {
+        id: a.id,
+        alias: a.alias,
+        api_key: a.api_key,
+        is_active: a.is_active,
+        active_requests: a.active_requests,
+        total_prompt_tokens: logs.reduce((sum, l) => sum + (l.prompt_tokens || 0), 0),
+        total_completion_tokens: logs.reduce((sum, l) => sum + (l.completion_tokens || 0), 0),
+        total_requests: logs.length,
+      };
+    });
+
+    const totalPromptTokens = allLogs.reduce((sum, l) => sum + (l.prompt_tokens || 0), 0);
+    const totalCompletionTokens = allLogs.reduce((sum, l) => sum + (l.completion_tokens || 0), 0);
 
     return c.json({
       accounts, maxConcurrent: config.maxConcurrentPerAccount,
       totalAccounts, page, limit,
-      totalPromptTokens: totals.total_prompt_tokens,
-      totalCompletionTokens: totals.total_completion_tokens,
+      totalPromptTokens,
+      totalCompletionTokens,
     });
   });
 
@@ -183,113 +223,146 @@ export function registerAdmin(app: Hono) {
     const limit = Math.min(Math.max(1, Number(c.req.query('limit') ?? 10)), 100);
     const offset = (page - 1) * limit;
 
-    const total = (db.prepare('SELECT COUNT(*) as cnt FROM api_keys').get() as { cnt: number }).cnt;
-    const apiKeys = db.prepare(`
-      SELECT k.id, k.key, k.name, k.is_active, k.request_count, k.last_used_at,
-             COALESCE(COUNT(l.id), 0) as total_requests,
-             COALESCE(SUM(l.prompt_tokens), 0) as total_prompt_tokens,
-             COALESCE(SUM(l.completion_tokens), 0) as total_completion_tokens
-      FROM api_keys k
-      LEFT JOIN request_logs l ON k.id = l.api_key_id
-      GROUP BY k.id
-      ORDER BY k.created_at DESC
-      LIMIT ? OFFSET ?
-    `).all(limit, offset);
+    const configData = loadConfig();
+    const allApiKeys = configData.api_keys || [];
+    const total = allApiKeys.length;
+
+    const allLogs = getAllLogs();
+    const logsByKey = new Map<string, RequestLogRecord[]>();
+    for (const log of allLogs) {
+      if (log.api_key_id) {
+        if (!logsByKey.has(log.api_key_id)) logsByKey.set(log.api_key_id, []);
+        logsByKey.get(log.api_key_id)!.push(log);
+      }
+    }
+
+    const apiKeys = allApiKeys.slice(offset, offset + limit).map(k => {
+      const logs = logsByKey.get(k.id) || [];
+      return {
+        ...k,
+        total_requests: logs.length,
+        total_prompt_tokens: logs.reduce((sum, l) => sum + (l.prompt_tokens || 0), 0),
+        total_completion_tokens: logs.reduce((sum, l) => sum + (l.completion_tokens || 0), 0),
+      };
+    });
+
     return c.json({ apiKeys, total, page, limit });
   });
 
   admin.get('/stats/overview', (c) => {
-    // 1. 今日概览
-    const today = db.prepare(`
-      SELECT COUNT(*) as requests,
-             COALESCE(SUM(prompt_tokens + completion_tokens + reasoning_tokens), 0) as tokens,
-             COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END), 0) as success_count,
-             COALESCE(AVG(CASE WHEN status='success' THEN duration_ms END), 0) as avg_latency
-      FROM request_logs WHERE date(created_at) = date('now')
-    `).get() as any;
+    const allLogs = getAllLogs();
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10).replace(/-/g, '');
 
-    const yesterday = db.prepare(`
-      SELECT COUNT(*) as requests,
-             COALESCE(SUM(prompt_tokens + completion_tokens + reasoning_tokens), 0) as tokens
-      FROM request_logs WHERE date(created_at) = date('now', '-1 day')
-    `).get() as any;
+    const todayLogs = allLogs.filter(l => l.created_at.replace(/[-:T ]/g, '').slice(0, 8) === today);
+    const yesterdayLogs = allLogs.filter(l => l.created_at.replace(/[-:T ]/g, '').slice(0, 8) === yesterday);
 
-    // 2. 每日趋势（最近 30 天）
-    const dailyTrend = db.prepare(`
-      SELECT date(created_at) as date,
-             COALESCE(SUM(prompt_tokens), 0) as input_tokens,
-             COALESCE(SUM(completion_tokens), 0) as output_tokens,
-             COUNT(*) as requests
-      FROM request_logs
-      WHERE created_at >= date('now', '-30 days')
-      GROUP BY date(created_at)
-      ORDER BY date ASC
-    `).all();
+    const todayStats = {
+      requests: todayLogs.length,
+      tokens: todayLogs.reduce((sum, l) => sum + (l.prompt_tokens || 0) + (l.completion_tokens || 0) + (l.reasoning_tokens || 0), 0),
+      success_count: todayLogs.filter(l => l.status === 'success').length,
+      avg_latency: todayLogs.filter(l => l.status === 'success').length > 0
+        ? todayLogs.filter(l => l.status === 'success').reduce((sum, l) => sum + l.duration_ms, 0) / todayLogs.filter(l => l.status === 'success').length
+        : 0,
+    };
 
-    // 3. 端点分布
-    const endpointDist = db.prepare(`
-      SELECT endpoint,
-             COUNT(*) as requests,
-             COALESCE(SUM(prompt_tokens + completion_tokens), 0) as tokens
-      FROM request_logs
-      GROUP BY endpoint
-    `).all();
+    const yesterdayStats = {
+      requests: yesterdayLogs.length,
+      tokens: yesterdayLogs.reduce((sum, l) => sum + (l.prompt_tokens || 0) + (l.completion_tokens || 0) + (l.reasoning_tokens || 0), 0),
+    };
 
-    // 4. 模型分布（Top 5）
-    const modelDist = db.prepare(`
-      SELECT model,
-             COUNT(*) as requests,
-             COALESCE(SUM(prompt_tokens + completion_tokens), 0) as tokens
-      FROM request_logs
-      WHERE model IS NOT NULL AND model != ''
-      GROUP BY model
-      ORDER BY tokens DESC
-      LIMIT 5
-    `).all();
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10).replace(/-/g, '');
+    const recentLogs = allLogs.filter(l => {
+      const date = l.created_at.replace(/[-:T ]/g, '').slice(0, 8);
+      return date >= thirtyDaysAgo;
+    });
 
-    // 5. 账号排行（Top 10）
-    const accountRanking = db.prepare(`
-      SELECT COALESCE(a.alias, a.user_id) as name,
-             COALESCE(SUM(l.prompt_tokens + l.completion_tokens), 0) as tokens,
-             COUNT(l.id) as requests
-      FROM request_logs l
-      LEFT JOIN accounts a ON l.account_id = a.id
-      GROUP BY l.account_id
-      ORDER BY tokens DESC
-      LIMIT 10
-    `).all();
+    const dailyMap = new Map<string, { input_tokens: number; output_tokens: number; requests: number }>();
+    for (const log of recentLogs) {
+      const date = log.created_at.slice(0, 10);
+      if (!dailyMap.has(date)) dailyMap.set(date, { input_tokens: 0, output_tokens: 0, requests: 0 });
+      const day = dailyMap.get(date)!;
+      day.input_tokens += log.prompt_tokens || 0;
+      day.output_tokens += log.completion_tokens || 0;
+      day.requests += 1;
+    }
+    const dailyTrend = Array.from(dailyMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, stats]) => ({ date, ...stats }));
 
-    // 6. API Key 排行（Top 10）
-    const apiKeyRanking = db.prepare(`
-      SELECT COALESCE(k.name, k.key) as name,
-             COALESCE(SUM(l.prompt_tokens + l.completion_tokens), 0) as tokens,
-             COUNT(l.id) as requests
-      FROM request_logs l
-      LEFT JOIN api_keys k ON l.api_key_id = k.id
-      WHERE l.api_key_id IS NOT NULL
-      GROUP BY l.api_key_id
-      ORDER BY tokens DESC
-      LIMIT 10
-    `).all();
+    const endpointMap = new Map<string, { requests: number; tokens: number }>();
+    for (const log of allLogs) {
+      if (!endpointMap.has(log.endpoint)) endpointMap.set(log.endpoint, { requests: 0, tokens: 0 });
+      const ep = endpointMap.get(log.endpoint)!;
+      ep.requests += 1;
+      ep.tokens += (log.prompt_tokens || 0) + (log.completion_tokens || 0);
+    }
+    const endpointDist = Array.from(endpointMap.entries()).map(([endpoint, stats]) => ({ endpoint, ...stats }));
 
-    // 7. 每小时分布（今天）
-    const hourlyDist = db.prepare(`
-      SELECT CAST(strftime('%H', created_at) AS INTEGER) as hour,
-             COUNT(*) as requests
-      FROM request_logs
-      WHERE date(created_at) = date('now')
-      GROUP BY hour
-      ORDER BY hour
-    `).all();
+    const modelMap = new Map<string, { requests: number; tokens: number }>();
+    for (const log of allLogs) {
+      if (log.model) {
+        if (!modelMap.has(log.model)) modelMap.set(log.model, { requests: 0, tokens: 0 });
+        const m = modelMap.get(log.model)!;
+        m.requests += 1;
+        m.tokens += (log.prompt_tokens || 0) + (log.completion_tokens || 0);
+      }
+    }
+    const modelDist = Array.from(modelMap.entries())
+      .map(([model, stats]) => ({ model, ...stats }))
+      .sort((a, b) => b.tokens - a.tokens)
+      .slice(0, 5);
+
+    const allAccounts = listAccounts();
+    const accountMap = new Map<string, string>();
+    for (const a of allAccounts) accountMap.set(a.id, a.alias || a.user_id);
+
+    const accountRankMap = new Map<string, { tokens: number; requests: number }>();
+    for (const log of allLogs) {
+      if (!accountRankMap.has(log.account_id)) accountRankMap.set(log.account_id, { tokens: 0, requests: 0 });
+      const ar = accountRankMap.get(log.account_id)!;
+      ar.tokens += (log.prompt_tokens || 0) + (log.completion_tokens || 0);
+      ar.requests += 1;
+    }
+    const accountRanking = Array.from(accountRankMap.entries())
+      .map(([id, stats]) => ({ name: accountMap.get(id) || id, ...stats }))
+      .sort((a, b) => b.tokens - a.tokens)
+      .slice(0, 10);
+
+    const configData = loadConfig();
+    const apiKeyMap = new Map<string, string>();
+    for (const k of configData.api_keys || []) apiKeyMap.set(k.id, k.name || k.key);
+
+    const apiKeyRankMap = new Map<string, { tokens: number; requests: number }>();
+    for (const log of allLogs) {
+      if (log.api_key_id) {
+        if (!apiKeyRankMap.has(log.api_key_id)) apiKeyRankMap.set(log.api_key_id, { tokens: 0, requests: 0 });
+        const ak = apiKeyRankMap.get(log.api_key_id)!;
+        ak.tokens += (log.prompt_tokens || 0) + (log.completion_tokens || 0);
+        ak.requests += 1;
+      }
+    }
+    const apiKeyRanking = Array.from(apiKeyRankMap.entries())
+      .map(([id, stats]) => ({ name: apiKeyMap.get(id) || id, ...stats }))
+      .sort((a, b) => b.tokens - a.tokens)
+      .slice(0, 10);
+
+    const hourlyMap = new Map<number, number>();
+    for (let h = 0; h < 24; h++) hourlyMap.set(h, 0);
+    for (const log of todayLogs) {
+      const hour = parseInt(log.created_at.slice(11, 13) || '0');
+      hourlyMap.set(hour, (hourlyMap.get(hour) || 0) + 1);
+    }
+    const hourlyDist = Array.from(hourlyMap.entries()).map(([hour, requests]) => ({ hour, requests }));
 
     return c.json({
       today: {
-        requests: today.requests,
-        tokens: today.tokens,
-        successRate: today.requests > 0 ? Math.round((today.success_count / today.requests) * 1000) / 10 : 100,
-        avgLatency: Math.round(today.avg_latency),
+        requests: todayStats.requests,
+        tokens: todayStats.tokens,
+        successRate: todayStats.requests > 0 ? Math.round((todayStats.success_count / todayStats.requests) * 1000) / 10 : 100,
+        avgLatency: Math.round(todayStats.avg_latency),
       },
-      yesterday: { requests: yesterday.requests, tokens: yesterday.tokens },
+      yesterday: { requests: yesterdayStats.requests, tokens: yesterdayStats.tokens },
       dailyTrend,
       endpointDist,
       modelDist,
@@ -332,13 +405,14 @@ export function registerAdmin(app: Hono) {
     const apiKey = getApiKeyById(id);
     if (!apiKey) return c.json({ error: 'Not found' }, 404);
 
-    const stats = db.prepare(`
-      SELECT COUNT(*) as total_requests,
-             COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
-             COALESCE(SUM(completion_tokens), 0) as total_completion_tokens
-      FROM request_logs
-      WHERE api_key_id = ?
-    `).get(id);
+    const allLogs = getAllLogs();
+    const keyLogs = allLogs.filter(l => l.api_key_id === id);
+
+    const stats = {
+      total_requests: keyLogs.length,
+      total_prompt_tokens: keyLogs.reduce((sum, l) => sum + (l.prompt_tokens || 0), 0),
+      total_completion_tokens: keyLogs.reduce((sum, l) => sum + (l.completion_tokens || 0), 0),
+    };
 
     return c.json({ ...apiKey, stats });
   });
