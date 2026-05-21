@@ -116,6 +116,21 @@ export function registerAdmin(app: Hono) {
     return c.json(listSessions());
   });
 
+  admin.get('/sessions/:id', (c) => {
+    const id = c.req.param('id');
+    const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    if (!session) return c.json({ error: 'Not found' }, 404);
+    // 获取该会话关联的请求日志（最近 50 条）
+    const logs = db.prepare(
+      'SELECT * FROM request_logs WHERE session_id = ? ORDER BY created_at DESC LIMIT 50'
+    ).all(id);
+    // 获取关联账号信息
+    const account = db.prepare(
+      'SELECT id, alias, user_id FROM accounts WHERE id = ?'
+    ).get(session.account_id as string) as Record<string, unknown> | undefined;
+    return c.json({ ...session, logs, account });
+  });
+
   admin.delete('/sessions/:id', (c) => {
     deleteSession(c.req.param('id'));
     return c.json({ message: 'Deleted' });
@@ -130,20 +145,31 @@ export function registerAdmin(app: Hono) {
   admin.get('/logs', (c) => {
     const accountId = c.req.query('account_id');
     const status = c.req.query('status');
-    const page = Number(c.req.query('page') ?? 1);
-    const limit = Math.min(Number(c.req.query('limit') ?? 50), 200);
+    const endpoint = c.req.query('endpoint');
+    const page = Math.max(1, Number(c.req.query('page') ?? 1));
+    const limit = Math.min(Math.max(1, Number(c.req.query('limit') ?? 50)), 200);
     const offset = (page - 1) * limit;
 
+    let countSql = 'SELECT COUNT(*) as cnt FROM request_logs WHERE 1=1';
     let sql = 'SELECT * FROM request_logs WHERE 1=1';
     const params: unknown[] = [];
-    if (accountId) { sql += ' AND account_id = ?'; params.push(accountId); }
-    if (status) { sql += ' AND status = ?'; params.push(status); }
+    const countParams: unknown[] = [];
+    if (accountId) { sql += ' AND account_id = ?'; params.push(accountId); countSql += ' AND account_id = ?'; countParams.push(accountId); }
+    if (status) { sql += ' AND status = ?'; params.push(status); countSql += ' AND status = ?'; countParams.push(status); }
+    if (endpoint) { sql += ' AND endpoint = ?'; params.push(endpoint); countSql += ' AND endpoint = ?'; countParams.push(endpoint); }
     sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
     params.push(limit, offset);
 
     const logs = db.prepare(sql).all(...params);
-    const total = (db.prepare('SELECT COUNT(*) as cnt FROM request_logs').get() as { cnt: number }).cnt;
+    const total = (db.prepare(countSql).get(...countParams) as { cnt: number }).cnt;
     return c.json({ logs, total, page, limit });
+  });
+
+  admin.get('/logs/:id', (c) => {
+    const id = c.req.param('id');
+    const log = db.prepare('SELECT * FROM request_logs WHERE id = ?').get(id);
+    if (!log) return c.json({ error: 'Not found' }, 404);
+    return c.json(log);
   });
 
   // --- Stats ---

@@ -148,6 +148,8 @@ function logRequest(data: {
   status: 'success' | 'error';
   error?: string;
   duration_ms: number;
+  request_body?: string | null;
+  response_body?: string | null;
 }) {
   logApiRequest({ ...data, endpoint: 'openai' });
 }
@@ -190,6 +192,7 @@ export function registerOpenAI(app: Hono) {
     const { account } = acquired;
 
     const body = await c.req.json();
+    const requestBody = JSON.stringify(body);
     console.log('[REQ] Body parsed:', { model: body.model || 'default', stream: body.stream ?? false, messages: body.messages?.length || 0, tools: body.tools?.length || 0, reasoning: !!body.reasoning_effort });
 
     const { messages: cleanedMsgs, medias } = await extractImages(account, body.messages ?? []);

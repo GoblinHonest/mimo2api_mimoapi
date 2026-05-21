@@ -131,6 +131,19 @@
   /* Toast */
   .toast-item{background:var(--c-toast-bg);border:1px solid var(--c-border);border-radius:var(--radius-sm);padding:12px 16px;margin-top:8px;font-size:13px;animation:slideIn .3s ease;display:flex;align-items:center;gap:8px;box-shadow:0 4px 12px rgba(0,0,0,.2)}
 
+  /* Detail Modal */
+  .detail-section{margin-bottom:16px}
+  .detail-section-title{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--c-text-4);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--c-border)}
+  .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px}
+  .detail-item{display:flex;flex-direction:column;gap:2px}
+  .detail-label{font-size:11px;color:var(--c-text-5)}
+  .detail-value{font-size:13px;color:var(--c-text-2);font-family:var(--font-mono),monospace;word-break:break-all}
+  .detail-body-box{background:var(--c-surface-2);border:1px solid var(--c-border);border-radius:var(--radius-sm);padding:10px 12px;font-size:12px;font-family:var(--font-mono),monospace;color:var(--c-text-3);max-height:240px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;line-height:1.5}
+  .detail-body-toggle{cursor:pointer;font-size:12px;color:var(--c-accent);display:inline-flex;align-items:center;gap:4px;margin-bottom:6px;user-select:none}
+  .detail-body-toggle:hover{text-decoration:underline}
+  .detail-log-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--c-border);font-size:12px}
+  .detail-log-row:last-child{border-bottom:none}
+
   /* Modal */
   .modal-card{animation:modalIn .2s ease;border-radius:var(--radius-lg);background:var(--c-surface);border:1px solid var(--c-border);box-shadow:0 25px 50px -12px rgba(0,0,0,.4)}
 
@@ -196,6 +209,19 @@
       <button id="modalCancel" onclick="closeModal(false)" class="btn btn-outline">取消</button>
       <button id="modalConfirm" onclick="closeModal(true)" class="btn btn-primary">确认</button>
     </div>
+  </div>
+</div>
+
+<!-- Detail Modal -->
+<div id="detailOverlay" class="fixed inset-0 z-[100] hidden items-center justify-center" style="background:var(--c-overlay);backdrop-filter:blur(4px)" onclick="closeDetailModal()">
+  <div class="modal-card p-6 w-full max-w-2xl mx-4" style="max-height:85vh;overflow-y:auto" onclick="event.stopPropagation()">
+    <div class="flex items-center justify-between mb-4">
+      <h3 id="detailTitle" class="text-base font-semibold" style="color:var(--c-text);margin:0"></h3>
+      <button onclick="closeDetailModal()" class="btn-ghost p-1" style="color:var(--c-text-4)">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div id="detailContent"></div>
   </div>
 </div>
 <!-- Mobile header -->
@@ -345,7 +371,7 @@
           <select id="logEndpoint" onchange="loadLogs(1)" class="w-28 text-xs"><option value="">全部端点</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select>
           <button onclick="loadLogs(1)" class="btn btn-outline btn-sm">刷新</button>
         </div>
-        <div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>端点</th><th>模型</th><th>输入 Token</th><th>输出 Token</th><th>耗时</th><th>状态</th></tr></thead><tbody id="logTable"></tbody></table></div>
+        <div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>端点</th><th>模型</th><th>输入 Token</th><th>输出 Token</th><th>耗时</th><th>状态</th><th>操作</th></tr></thead><tbody id="logTable"></tbody></table></div>
         <div class="flex gap-1 mt-4 items-center" id="logPagination"></div>
       </div>
     </div>
@@ -697,7 +723,7 @@ function renderLogs(d){
   var logs=d.logs||[];
   var logTableEl = document.getElementById('logTable');
   if (logTableEl) {
-    logTableEl.innerHTML=logs.length?logs.map(function(l){return '<tr><td class="text-xs font-mono whitespace-nowrap" style="color:var(--c-text-5)">'+((l.created_at||''))+'</td><td><span class="badge badge-blue">'+l.endpoint+'</span></td><td class="text-xs" style="color:var(--c-text-4)">'+((l.model||'-'))+'</td><td class="text-xs" style="color:var(--c-accent)">'+((l.prompt_tokens??'-'))+'</td><td class="text-xs" style="color:var(--c-accent-green)">'+((l.completion_tokens??'-'))+'</td><td class="text-xs" style="color:var(--c-text-4)">'+((l.duration_ms??'-'))+'ms</td><td><span class="badge '+(l.status==='success'?'badge-green':'badge-red')+'">'+(l.status==='success'?'成功':'失败')+'</span>'+(l.error?'<span class="text-xs ml-1" style="color:var(--c-accent-red)">'+l.error.slice(0,30)+'</span>':'')+'</td></tr>'}).join(''):'<tr><td colspan="7"><div class="empty-state"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg><p>暂无日志数据</p></div></td></tr>';
+    logTableEl.innerHTML=logs.length?logs.map(function(l){return '<tr><td class="text-xs font-mono whitespace-nowrap" style="color:var(--c-text-5)">'+((l.created_at||''))+'</td><td><span class="badge badge-blue">'+l.endpoint+'</span></td><td class="text-xs" style="color:var(--c-text-4)">'+((l.model||'-'))+'</td><td class="text-xs" style="color:var(--c-accent)">'+((l.prompt_tokens??'-'))+'</td><td class="text-xs" style="color:var(--c-accent-green)">'+((l.completion_tokens??'-'))+'</td><td class="text-xs" style="color:var(--c-text-4)">'+((l.duration_ms??'-'))+'ms</td><td><span class="badge '+(l.status==='success'?'badge-green':'badge-red')+'">'+(l.status==='success'?'成功':'失败')+'</span>'+(l.error?'<span class="text-xs ml-1" style="color:var(--c-accent-red)">'+l.error.slice(0,30)+'</span>':'')+'</td><td><button class="btn btn-outline btn-sm" onclick="viewLogDetail(\''+l.id+'\')" style="padding:2px 8px;font-size:11px">详情</button></td></tr>'}).join(''):'<tr><td colspan="8"><div class="empty-state"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg><p>暂无日志数据</p></div></td></tr>';
   }
   renderPagination('logPagination',d.total||0,50,logPage,'loadLogs');
 }
@@ -722,7 +748,7 @@ async function loadLogs(page){
     if (!cached) {
       var logTableEl = document.getElementById('logTable');
       if (logTableEl) {
-        logTableEl.innerHTML='<tr><td colspan="7"><div class="empty-state"><p>加载失败，请检查网络</p></div></td></tr>';
+        logTableEl.innerHTML='<tr><td colspan="8"><div class="empty-state"><p>加载失败，请检查网络</p></div></td></tr>';
       }
     }
   }
@@ -731,7 +757,7 @@ async function loadLogs(page){
 function renderSessions(sessions){
   var sessionTableEl = document.getElementById('sessionTable');
   if (sessionTableEl) {
-    sessionTableEl.innerHTML=sessions.length?sessions.map(function(s){return '<tr><td class="text-xs font-mono" style="color:var(--c-text-5)">'+s.id.slice(0,16)+'...</td><td class="text-xs font-mono" style="color:var(--c-text-5)">'+s.account_id.slice(0,12)+'...</td><td class="text-xs" style="color:var(--c-text-3)">'+s.client_session_id+'</td><td class="text-xs" style="color:var(--c-accent)">'+((s.cumulative_prompt_tokens||0).toLocaleString())+'</td><td class="text-xs" style="color:var(--c-text-5)">'+((s.last_used_at||''))+'</td><td><button class="btn btn-danger btn-sm" onclick="deleteSession(\''+s.id+'\')">删除</button></td></tr>'}).join(''):'<tr><td colspan="6"><div class="empty-state"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V20.5l3.5-3.5"/></svg><p>暂无会话数据</p></div></td></tr>';
+    sessionTableEl.innerHTML=sessions.length?sessions.map(function(s){return '<tr><td class="text-xs font-mono" style="color:var(--c-text-5)">'+s.id.slice(0,16)+'...</td><td class="text-xs font-mono" style="color:var(--c-text-5)">'+s.account_id.slice(0,12)+'...</td><td class="text-xs" style="color:var(--c-text-3)">'+s.client_session_id+'</td><td class="text-xs" style="color:var(--c-accent)">'+((s.cumulative_prompt_tokens||0).toLocaleString())+'</td><td class="text-xs" style="color:var(--c-text-5)">'+((s.last_used_at||''))+'</td><td><div class="flex gap-1.5"><button class="btn btn-outline btn-sm" onclick="viewSessionDetail(\''+s.id+'\')" style="padding:2px 8px;font-size:11px">详情</button><button class="btn btn-danger btn-sm" onclick="deleteSession(\''+s.id+'\')">删除</button></div></td></tr>'}).join(''):'<tr><td colspan="6"><div class="empty-state"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V20.5l3.5-3.5"/></svg><p>暂无会话数据</p></div></td></tr>';
   }
 }
 async function loadSessions(){
@@ -748,7 +774,7 @@ async function loadSessions(){
     if (!cached) {
       var sessionTableEl = document.getElementById('sessionTable');
       if (sessionTableEl) {
-        sessionTableEl.innerHTML = '<tr><td colspan="6"><div class="empty-state"><p>加载失败，请检查网络</p></div></td></tr>';
+        sessionTableEl.innerHTML = '<tr><td colspan="7"><div class="empty-state"><p>加载失败，请检查网络</p></div></td></tr>';
       }
     }
   }
@@ -782,6 +808,139 @@ function copyApiKey(btn){var code=btn.closest('td').querySelector('.key-display'
 async function editApiKey(id,name){var newName=await showModal({title:'修改密钥名称',message:'请输入新的密钥名称',type:'prompt',defaultValue:name,placeholder:'密钥名称'});if(newName===null)return;var res=await api('/admin/api-keys/'+id,{method:'PATCH',body:{name:newName}});res.message?toast('名称已更新'):toast(res.error||'更新失败',false);loadApiKeys()}
 async function toggleApiKeyStatus(id,cur){await api('/admin/api-keys/'+id,{method:'PATCH',body:{is_active:cur?0:1}});loadApiKeys()}
 async function deleteApiKey(id){var ok=await showModal({title:'删除 API 密钥',message:'确认删除此 API 密钥？删除后使用该密钥的客户端将无法访问。',dangerous:true,confirmText:'删除'});if(!ok)return;await api('/admin/api-keys/'+id,{method:'DELETE'});toast('已删除');loadApiKeys()}
+
+// --- Detail Modal ---
+function openDetailModal(title, htmlContent) {
+  document.getElementById('detailTitle').textContent = title;
+  document.getElementById('detailContent').innerHTML = htmlContent;
+  var overlay = document.getElementById('detailOverlay');
+  overlay.classList.remove('hidden');
+  overlay.style.display = 'flex';
+}
+function closeDetailModal() {
+  var overlay = document.getElementById('detailOverlay');
+  overlay.classList.add('hidden');
+  overlay.style.display = 'none';
+}
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function formatJsonBody(body, label, id) {
+  if (!body) return '<div class="detail-section"><div class="detail-section-title">'+label+'</div><span style="color:var(--c-text-5);font-size:12px">无数据</span></div>';
+  var formatted = body;
+  try { formatted = JSON.stringify(JSON.parse(body), null, 2); } catch(e) { /* keep as-is */ }
+  return '<div class="detail-section">'
+    + '<div class="detail-section-title">'+label+'</div>'
+    + '<div class="detail-body-toggle" onclick="toggleDetailBody(\''+id+'\')">'
+    + '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>'
+    + ' 展开查看</div>'
+    + '<div id="'+id+'" class="detail-body-box hidden">'+escHtml(formatted)+'</div>'
+    + '</div>';
+}
+function toggleDetailBody(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var toggle = el.previousElementSibling;
+  if (el.classList.contains('hidden')) {
+    el.classList.remove('hidden');
+    toggle.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5"/></svg> 收起';
+  } else {
+    el.classList.add('hidden');
+    toggle.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg> 展开查看';
+  }
+}
+async function viewLogDetail(id) {
+  try {
+    var log = await api('/admin/logs/' + id);
+    if (log.error) { toast(log.error, false); return; }
+    var html = '';
+    html += '<div class="detail-section">';
+    html += '<div class="detail-section-title">请求信息</div>';
+    html += '<div class="detail-grid">';
+    html += '<div class="detail-item"><span class="detail-label">请求 ID</span><span class="detail-value">'+escHtml(log.id)+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">时间</span><span class="detail-value">'+escHtml(log.created_at||'-')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">端点</span><span class="detail-value"><span class="badge badge-blue">'+escHtml(log.endpoint||'-')+'</span></span></div>';
+    html += '<div class="detail-item"><span class="detail-label">模型</span><span class="detail-value">'+escHtml(log.model||'-')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">状态</span><span class="detail-value"><span class="badge '+(log.status==='success'?'badge-green':'badge-red')+'">'+(log.status==='success'?'成功':'失败')+'</span></span></div>';
+    html += '<div class="detail-item"><span class="detail-label">耗时</span><span class="detail-value">'+((log.duration_ms!=null)?log.duration_ms+'ms':'-')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">账号 ID</span><span class="detail-value">'+escHtml(log.account_id||'-')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">会话 ID</span><span class="detail-value">'+escHtml(log.session_id||'-')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">API Key ID</span><span class="detail-value">'+escHtml(log.api_key_id||'-')+'</span></div>';
+    html += '</div></div>';
+    html += '<div class="detail-section">';
+    html += '<div class="detail-section-title">Token 统计</div>';
+    html += '<div class="detail-grid">';
+    html += '<div class="detail-item"><span class="detail-label">输入 Token</span><span class="detail-value" style="color:var(--c-accent)">'+((log.prompt_tokens!=null)?log.prompt_tokens.toLocaleString():'-')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">输出 Token</span><span class="detail-value" style="color:var(--c-accent-green)">'+((log.completion_tokens!=null)?log.completion_tokens.toLocaleString():'-')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">推理 Token</span><span class="detail-value" style="color:var(--c-accent-amber)">'+((log.reasoning_tokens!=null)?log.reasoning_tokens.toLocaleString():'-')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">总 Token</span><span class="detail-value" style="font-weight:600">'+(((log.prompt_tokens||0)+(log.completion_tokens||0)+(log.reasoning_tokens||0)).toLocaleString())+'</span></div>';
+    html += '</div></div>';
+    if (log.error) {
+      html += '<div class="detail-section">';
+      html += '<div class="detail-section-title" style="color:var(--c-accent-red)">错误信息</div>';
+      html += '<div class="detail-body-box" style="color:var(--c-accent-red)">'+escHtml(log.error)+'</div>';
+      html += '</div>';
+    }
+    html += formatJsonBody(log.request_body, '请求体 (Request Body)', 'logReqBody');
+    html += formatJsonBody(log.response_body, '响应体 (Response Body)', 'logResBody');
+    openDetailModal('请求日志详情', html);
+  } catch(e) { toast('加载详情失败', false); }
+}
+async function viewSessionDetail(id) {
+  try {
+    var data = await api('/admin/sessions/' + id);
+    if (data.error) { toast(data.error, false); return; }
+    var html = '';
+    html += '<div class="detail-section">';
+    html += '<div class="detail-section-title">会话信息</div>';
+    html += '<div class="detail-grid">';
+    html += '<div class="detail-item"><span class="detail-label">会话 ID</span><span class="detail-value">'+escHtml(data.id)+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">客户端 Key</span><span class="detail-value">'+escHtml(data.client_session_id||'-')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">对话 ID</span><span class="detail-value">'+escHtml(data.conversation_id||'-')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">过期状态</span><span class="detail-value"><span class="badge '+(data.is_expired?'badge-red':'badge-green')+'">'+(data.is_expired?'已过期':'活跃')+'</span></span></div>';
+    html += '<div class="detail-item"><span class="detail-label">累计输入 Token</span><span class="detail-value" style="color:var(--c-accent)">'+((data.cumulative_prompt_tokens||0).toLocaleString())+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">创建时间</span><span class="detail-value">'+escHtml(data.created_at||'-')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">最后使用</span><span class="detail-value">'+escHtml(data.last_used_at||'-')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">消息指纹</span><span class="detail-value" style="font-size:11px">'+escHtml(data.last_message_fingerprint||'-')+'</span></div>';
+    html += '</div></div>';
+    if (data.account) {
+      html += '<div class="detail-section">';
+      html += '<div class="detail-section-title">关联账号</div>';
+      html += '<div class="detail-grid">';
+      html += '<div class="detail-item"><span class="detail-label">别名</span><span class="detail-value">'+escHtml(data.account.alias||'-')+'</span></div>';
+      html += '<div class="detail-item"><span class="detail-label">用户 ID</span><span class="detail-value">'+escHtml(data.account.user_id||'-')+'</span></div>';
+      html += '<div class="detail-item"><span class="detail-label">账号 ID</span><span class="detail-value">'+escHtml(data.account.id||'-')+'</span></div>';
+      html += '</div></div>';
+    }
+    var logs = data.logs || [];
+    html += '<div class="detail-section">';
+    html += '<div class="detail-section-title">关联请求日志 (最近 '+logs.length+' 条)</div>';
+    if (logs.length === 0) {
+      html += '<span style="color:var(--c-text-5);font-size:12px">暂无请求记录</span>';
+    } else {
+      logs.forEach(function(l) {
+        var statusColor = l.status === 'success' ? 'var(--c-accent-green)' : 'var(--c-accent-red)';
+        html += '<div class="detail-log-row">';
+        html += '<span style="color:var(--c-text-5);font-family:var(--font-mono),monospace;font-size:11px;white-space:nowrap">'+escHtml((l.created_at||'').slice(5,16))+'</span>';
+        html += '<span class="badge badge-blue" style="font-size:10px">'+escHtml(l.endpoint||'-')+'</span>';
+        html += '<span style="color:var(--c-text-4);font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(l.model||'-')+'</span>';
+        html += '<span style="color:var(--c-accent);font-size:11px" title="输入 Token">'+((l.prompt_tokens!=null)?l.prompt_tokens:'-')+'</span>';
+        html += '<span style="color:var(--c-accent-green);font-size:11px" title="输出 Token">'+((l.completion_tokens!=null)?l.completion_tokens:'-')+'</span>';
+        html += '<span style="color:'+statusColor+';font-size:11px">'+(l.status==='success'?'成功':'失败')+'</span>';
+        html += '<button class="btn btn-outline btn-sm" style="padding:2px 6px;font-size:10px" onclick="closeDetailModal();viewLogDetail(\''+l.id+'\')">查看</button>';
+        html += '</div>';
+      });
+    }
+    html += '</div>';
+    openDetailModal('会话详情', html);
+  } catch(e) { toast('加载详情失败', false); }
+}
+
+// Keyboard shortcut: ESC to close detail modal
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeDetailModal();
+});
 
 ensureAuth().then(function(){clearAdminCache();loadAccounts()});
 

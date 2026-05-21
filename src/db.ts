@@ -110,6 +110,24 @@ export function initDb() {
     }
   }
 
+  // 迁移：添加 request_body 和 response_body 列到 request_logs（如果不存在）
+  try {
+    db.exec(`ALTER TABLE request_logs ADD COLUMN request_body TEXT`);
+    console.log('[DB] Added request_body column to request_logs table');
+  } catch (err: any) {
+    if (!err.message.includes('duplicate column name')) {
+      console.error('[DB] Migration error:', err);
+    }
+  }
+  try {
+    db.exec(`ALTER TABLE request_logs ADD COLUMN response_body TEXT`);
+    console.log('[DB] Added response_body column to request_logs table');
+  } catch (err: any) {
+    if (!err.message.includes('duplicate column name')) {
+      console.error('[DB] Migration error:', err);
+    }
+  }
+
   // 清理旧的列（如果存在）
   const columns = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
   const hasOldColumns = columns.some(c => c.name === 'last_messages_hash' || c.name === 'last_msg_count');

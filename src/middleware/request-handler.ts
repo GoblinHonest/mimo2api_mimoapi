@@ -40,15 +40,18 @@ export function logApiRequest(data: {
   status: 'success' | 'error';
   error?: string;
   duration_ms: number;
+  request_body?: string | null;
+  response_body?: string | null;
 }) {
   db.prepare(
-    `INSERT INTO request_logs (id, account_id, session_id, api_key_id, endpoint, model, prompt_tokens, completion_tokens, reasoning_tokens, duration_ms, status, error, created_at)
-     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO request_logs (id, account_id, session_id, api_key_id, endpoint, model, prompt_tokens, completion_tokens, reasoning_tokens, duration_ms, status, error, request_body, response_body, created_at)
+     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     randomUUID(), data.account_id, data.api_key_id, data.endpoint, data.model,
     data.usage?.promptTokens ?? null, data.usage?.completionTokens ?? null,
     data.usage?.reasoningTokens ?? null, data.duration_ms,
-    data.status, data.error ?? null, new Date().toLocaleString('sv-SE')
+    data.status, data.error ?? null, data.request_body ?? null, data.response_body ?? null,
+    new Date().toLocaleString('sv-SE')
   );
 }
 
