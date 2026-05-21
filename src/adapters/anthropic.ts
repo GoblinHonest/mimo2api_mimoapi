@@ -14,6 +14,8 @@ import { getOrCreateSession, updateSessionTokens } from '../mimo/session.js';
 import { extractApiKey, authenticateRequest, acquireAccountForRequest, logApiRequest, handleAccountError } from '../middleware/request-handler.js';
 import { generateClientSessionId } from '../mimo/session-marker.js';
 
+const DEBUG = process.env.DEBUG_MIMO === '1' || process.env.DEBUG_MIMO === 'true';
+
 // 静态 fallback
 const MODEL_MAP: Record<string, string> = {
   'mimo-v2.5-pro': 'mimo-v2.5-pro',
@@ -279,7 +281,7 @@ export function registerAnthropic(app: Hono) {
 
               if (chunk.type === 'text') {
                 let text = (chunk.content ?? '').replace(/\u0000/g, '');
-                if (text) console.log('[DBG] chunk:', JSON.stringify(text.slice(0, 80)), 'pastThink:', pastThink, 'tcBuf:', toolCallBuf !== null);
+                if (text && DEBUG) console.log('[DBG] chunk:', JSON.stringify(text.slice(0, 80)), 'pastThink:', pastThink, 'tcBuf:', toolCallBuf !== null);
                 if (!pastThink && !thinkingStarted && text && !text.includes('<think>')) {
                   pastThink = true;
                   if (!firstBlockSent) {
@@ -306,7 +308,7 @@ export function registerAnthropic(app: Hono) {
                     const afterThink = text.slice(closeIdx + 8).trimStart();
                     if (responseThinkMode === 'separate') {
                       if (thinkPart) {
-                        console.log('[DBG] Sending thinking_delta:', JSON.stringify(thinkPart.slice(0, 50)));
+                        if (DEBUG) console.log('[DBG] Sending thinking_delta:', JSON.stringify(thinkPart.slice(0, 50)));
                         await sendEvent('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: thinkPart } });
                       }
                       await sendEvent('content_block_stop', { type: 'content_block_stop', index: 0 });
@@ -319,7 +321,7 @@ export function registerAnthropic(app: Hono) {
                   } else {
                     if (responseThinkMode === 'separate') {
                       if (text) {
-                        console.log('[DBG] Sending thinking_delta chunk:', JSON.stringify(text.slice(0, 50)));
+                        if (DEBUG) console.log('[DBG] Sending thinking_delta chunk:', JSON.stringify(text.slice(0, 50)));
                         await sendEvent('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: text } });
                       }
                     } else if (responseThinkMode === 'passthrough') {
