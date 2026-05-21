@@ -4,9 +4,8 @@ dist
 .github
 .gitignore
 *.log
-*.db
-*.db-shm
-*.db-wal
+data
+logs
 .claude
 README.md
 docker-compose.yml

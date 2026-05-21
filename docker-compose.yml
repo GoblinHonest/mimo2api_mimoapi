@@ -7,7 +7,7 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/app/data
-      - ./dbdata:/app/dbdata
+      - ./logs:/app/logs
     restart: unless-stopped
     environment:
       - NODE_ENV=production

@@ -27,7 +27,7 @@
 **管理**
 - Web 管理面板（账号、API 密钥、请求日志、统计图表）
 - REST 管理 API
-- SQLite 持久化存储
+- JSON 文件持久化存储
 
 ## 快速开始
 
@@ -77,7 +77,7 @@ docker compose down
 
 数据目录会挂载到宿主机：
 - `./data` - 应用数据目录
-- `./dbdata` - SQLite 数据库目录（含 `mimo-proxy.db`）
+- `./logs` - 日志目录
 
 #### 端口配置
 
@@ -108,7 +108,7 @@ docker run -d \
   --name mimo-proxy \
   -p 8080:8080 \
   -v $(pwd)/data:/app/data \
-  -v $(pwd)/dbdata:/app/dbdata \
+  -v $(pwd)/logs:/app/logs \
   mimo-proxy
 ```
 
@@ -194,7 +194,7 @@ curl http://localhost:8080/v1/chat/completions \
 
 ## 应用配置
 
-配置通过 **Admin Web UI**（`http://localhost:8080/`）或 **Admin API** 管理，持久化存储在 SQLite 数据库中，`.env` 文件不会被读取。
+配置通过 **Admin Web UI**（`http://localhost:8080/`）或 **Admin API** 管理，持久化存储在 JSON 文件中。
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
@@ -246,8 +246,8 @@ src/
 │   ├── style.css
 │   ├── input.css
 │   └── chart.js
-├── config.ts          # 配置加载（数据库 → 内存）
-├── db.ts              # SQLite 初始化
+├── config.ts          # 配置加载（JSON → 内存）
+├── db.ts              # JSON 文件存储工具
 ├── accounts.ts        # 多账号管理 & 负载均衡
 ├── api-keys.ts        # API 密钥管理
 └── index.ts           # 入口

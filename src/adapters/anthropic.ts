@@ -116,7 +116,7 @@ function buildMessages(body: Record<string, unknown>): ChatMessage[] {
         } else if (b.type === 'tool_result') {
           const resultContent = typeof b.content === 'string' ? b.content
             : Array.isArray(b.content) ? (b.content as Array<{type:string;text?:string}>).filter(x=>x.type==='text').map(x=>x.text??'').join('') : JSON.stringify(b.content);
-          parts.push(`[工具结果]\n${resultContent}`);
+          parts.push(`[Tool Result]\n${resultContent}`);
         }
       }
       content = parts.join('\n');
