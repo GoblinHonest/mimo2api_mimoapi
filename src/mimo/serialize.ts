@@ -99,13 +99,13 @@ function formatMessageForHistory(m: ChatMessage): string {
       return `${tc.function.name}(${args})`;
     }).join('\n');
     const contentPart = m.content ? `\n${m.content}` : '';
-    return `assistant: [调用工具]\n${callsStr}${contentPart}`;
+    return `assistant: [Tool Calls]\n${callsStr}${contentPart}`;
   }
 
   // tool 消息：显示工具结果
   if (m.role === 'tool') {
     const name = m.name || 'unknown';
-    return `[工具结果] ${name}:\n${m.content}`;
+    return `[Tool Result] ${name}:\n${m.content}`;
   }
 
   // 普通消息
@@ -127,7 +127,7 @@ export function serializeMessages(messages: ChatMessage[]): string {
   const parts: string[] = [];
 
   const sysContent = system.map(m => m.content).join('\n');
-  if (sysContent) parts.push(`[系统指令]\n${sysContent}`);
+  if (sysContent) parts.push(`[System Instruction]\n${sysContent}`);
 
   const nonSystem = msgs.filter(m => m.role !== 'system');
   const dialogHistory = nonSystem.slice(0, -1);
@@ -135,13 +135,13 @@ export function serializeMessages(messages: ChatMessage[]): string {
 
   if (dialogHistory.length > 0) {
     const histStr = dialogHistory.map(m => formatMessageForHistory(m)).join('\n');
-    parts.push(`[对话历史]\n${histStr}`);
+    parts.push(`[Conversation History]\n${histStr}`);
   }
 
-  if (lastMsg) parts.push(`[当前问题]\n${formatMessageForHistory(lastMsg)}`);
+  if (lastMsg) parts.push(`[Current Query]\n${formatMessageForHistory(lastMsg)}`);
 
   // 强制截断以确保不超过 MiMo 限制
-  const sysStr = sysContent ? `[系统指令]\n${sysContent}` : '';
+  const sysStr = sysContent ? `[System Instruction]\n${sysContent}` : '';
   const restStr = parts.slice(sysContent ? 1 : 0).join('\n\n');
 
   // 计算剩余可用空间
@@ -152,7 +152,7 @@ export function serializeMessages(messages: ChatMessage[]): string {
   if (sysStr.length > config.maxQueryChars * 0.6) {
     // System prompt 最多占 60%
     const maxSys = Math.floor(config.maxQueryChars * 0.6);
-    finalSysStr = sysStr.slice(0, maxSys) + '\n...(工具定义已截断)';
+    finalSysStr = sysStr.slice(0, maxSys) + '\n...(tool definitions truncated)';
     maxRest = config.maxQueryChars - finalSysStr.length - 2;
     console.log('[SERIALIZE] ⚠️ System prompt truncated:', {
       original: sysStr.length,
@@ -163,7 +163,7 @@ export function serializeMessages(messages: ChatMessage[]): string {
 
   // 截断对话历史和当前消息
   const truncatedRest = maxRest > 0 && restStr.length > maxRest
-    ? '...(历史消息已截断)\n\n' + restStr.slice(-maxRest + 30)
+    ? '...(history truncated)\n\n' + restStr.slice(-maxRest + 30)
     : restStr;
 
   const result = finalSysStr ? `${finalSysStr}\n\n${truncatedRest}` : truncatedRest;
@@ -195,5 +195,5 @@ export function extractLastUserMessage(messages: ChatMessage[]): string {
   const lastUser = userMsgs[userMsgs.length - 1]?.content ?? '';
   if (system.length === 0) return lastUser;
   const sysContent = system.map(m => m.content).join('\n');
-  return `[系统指令]\n${sysContent}\n\n[当前问题]\n${lastUser}`;
+  return `[System Instruction]\n${sysContent}\n\n[Current Query]\n${lastUser}`;
 }
