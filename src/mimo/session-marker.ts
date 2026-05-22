@@ -13,8 +13,11 @@ import { Context } from 'hono';
  * 原因：system 消息可能包含动态内容（如 tools 列表），会导致指纹变化
  */
 export function calculateMessageFingerprint(messages: any[]): string {
-  // 过滤掉 system 消息，只保留 user 和 assistant
-  const nonSystemMessages = messages.filter(m => m.role !== 'system');
+  // 过滤掉 system、tool 消息和带 tool_calls 的 assistant 消息
+  // 只保留纯 user 和纯 assistant 消息用于判断对话连续性
+  const nonSystemMessages = messages.filter(
+    m => m.role !== 'system' && m.role !== 'tool' && !m.tool_calls
+  );
 
   // 如果没有非 system 消息，返回空指纹
   if (nonSystemMessages.length === 0) {

@@ -121,13 +121,13 @@ function buildMessages(body: Record<string, unknown>): ChatMessage[] {
     if (typeof m.content === 'string') {
       content = m.content;
     } else if (Array.isArray(m.content)) {
-      const blocks = m.content as Array<{ type: string; text?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown }>;
+      const blocks = m.content as Array<{ type: string; id?: string; text?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown }>;
       const parts: string[] = [];
       for (const b of blocks) {
         if (b.type === 'text') {
           parts.push(b.text ?? '');
         } else if (b.type === 'tool_use') {
-          parts.push(`<tool_call>\n${JSON.stringify({ name: b.name, arguments: b.input })}\n</tool_call>`);
+          parts.push(`<tool_call>\n${JSON.stringify({ id: b.id, name: b.name, arguments: b.input })}\n</tool_call>`);
         } else if (b.type === 'tool_result') {
           const resultContent = typeof b.content === 'string' ? b.content
             : Array.isArray(b.content) ? (b.content as Array<{type:string;text?:string}>).filter(x=>x.type==='text').map(x=>x.text??'').join('') : JSON.stringify(b.content);

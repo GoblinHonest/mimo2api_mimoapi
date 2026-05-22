@@ -102,10 +102,11 @@ function formatMessageForHistory(m: ChatMessage): string {
     return `assistant: [Tool Calls]\n${callsStr}${contentPart}`;
   }
 
-  // tool 消息：显示工具结果
+  // tool 消息：显示工具结果（附带 tool_call_id 以关联调用）
   if (m.role === 'tool') {
     const name = m.name || 'unknown';
-    return `[Tool Result] ${name}:\n${m.content}`;
+    const ref = m.tool_call_id ? ` (${m.tool_call_id})` : '';
+    return `[Tool Result] ${name}${ref}:\n${m.content}`;
   }
 
   // 普通消息

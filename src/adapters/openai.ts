@@ -256,7 +256,7 @@ export function registerOpenAI(app: Hono) {
           const sendDelta = async (delta: object) => {
             if (isAborted) return;
             try {
-              await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
+              await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, system_fingerprint: `fp_mimo_${created}`, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
               chunkCount++;
             } catch (err) {
               console.error('[STREAM] ❌ Write error:', err);
@@ -468,14 +468,29 @@ export function registerOpenAI(app: Hono) {
 
                 if (toolCallBuf && hasToolCallMarker(toolCallBuf)) {
                   if (shouldConvertToToolCalls) {
-                    // 客户端请求了原生工具调用，转换为 OpenAI 格式
                     const calls = parseToolCalls(toolCallBuf);
                     if (calls.length > 0) {
                       finishReason = 'tool_calls';
                       const openaiCalls = toOpenAIToolCalls(calls);
-                      await sendDelta({ tool_calls: openaiCalls.map((tc, i) => ({ index: i, ...tc })) });
+                      // Step 1: 发送 role + 空 arguments 的初始 chunk
+                      await sendDelta({
+                        role: 'assistant',
+                        tool_calls: openaiCalls.map((tc, i) => ({
+                          index: i, id: tc.id, type: 'function',
+                          function: { name: tc.function.name, arguments: '' },
+                        })),
+                      });
+                      // Step 2: 分片发送 arguments
+                      const CHUNK_SIZE = 50;
+                      for (let i = 0; i < openaiCalls.length; i++) {
+                        const args = openaiCalls[i].function.arguments;
+                        for (let offset = 0; offset < args.length; offset += CHUNK_SIZE) {
+                          await sendDelta({
+                            tool_calls: [{ index: i, function: { arguments: args.slice(offset, offset + CHUNK_SIZE) } }],
+                          });
+                        }
+                      }
                     } else {
-                      // 解析失败，将内容缓存到 contentBuf
                       contentBuf += toolCallBuf;
                     }
                   } else {
@@ -494,7 +509,22 @@ export function registerOpenAI(app: Hono) {
                       if (calls.length > 0) {
                         finishReason = 'tool_calls';
                         const openaiCalls = toOpenAIToolCalls(calls);
-                        await sendDelta({ tool_calls: openaiCalls.map((tc, i) => ({ index: i, ...tc })) });
+                        await sendDelta({
+                          role: 'assistant',
+                          tool_calls: openaiCalls.map((tc, i) => ({
+                            index: i, id: tc.id, type: 'function',
+                            function: { name: tc.function.name, arguments: '' },
+                          })),
+                        });
+                        const CHUNK_SIZE = 50;
+                        for (let i = 0; i < openaiCalls.length; i++) {
+                          const args = openaiCalls[i].function.arguments;
+                          for (let offset = 0; offset < args.length; offset += CHUNK_SIZE) {
+                            await sendDelta({
+                              tool_calls: [{ index: i, function: { arguments: args.slice(offset, offset + CHUNK_SIZE) } }],
+                            });
+                          }
+                        }
                       } else {
                         contentBuf += toolCallBuf;
                       }
@@ -509,7 +539,7 @@ export function registerOpenAI(app: Hono) {
                 if (finishReason !== 'tool_calls' && contentBuf) {
                   await sendDelta({ content: contentBuf });
                 }
-                await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage: usageChunk })}\n\n`);
+                await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, system_fingerprint: `fp_mimo_${created}`, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage: usageChunk })}\n\n`);
                 await s.write('data: [DONE]\n\n');
                 console.log('[STREAM] ✓ Completed:', { chunks: chunkCount, finishReason, tokens: lastUsage?.totalTokens || 0, duration: Date.now() - startTime + 'ms' });
               }
@@ -558,14 +588,21 @@ export function registerOpenAI(app: Hono) {
         const calls = parseToolCalls(fullText);
         if (calls.length > 0) {
           return c.json({
-            id: responseId, object: 'chat.completion', created, model: mimoModel,
+            id: responseId, object: 'chat.completion', created, model: mimoModel, system_fingerprint: `fp_mimo_${created}`,
             choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: toOpenAIToolCalls(calls) }, finish_reason: 'tool_calls' }],
             usage: usageObj,
           });
         }
+        // 检测到工具标记但解析失败 — 返回文本但标记为 length
+        console.warn('[REQ] Tool call markers detected but parsing failed, returning as text');
+        return c.json({
+          id: responseId, object: 'chat.completion', created, model: mimoModel, system_fingerprint: `fp_mimo_${created}`,
+          choices: [{ index: 0, message: { role: 'assistant', content: fullText }, finish_reason: 'length' }],
+          usage: usageObj,
+        });
       }
       return c.json({
-        id: responseId, object: 'chat.completion', created, model: mimoModel,
+        id: responseId, object: 'chat.completion', created, model: mimoModel, system_fingerprint: `fp_mimo_${created}`,
         choices: [{ index: 0, message: { role: 'assistant', content: fullText }, finish_reason: 'stop' }],
         usage: usageObj,
       });
