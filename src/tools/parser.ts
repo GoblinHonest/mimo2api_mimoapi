@@ -278,6 +278,17 @@ function extractName(inner: string): string | null {
     }
   }
 
+  // 5. Roo Code 格式: <function tool_name>...</function>
+  // 其中 tool_name 是 function 标签的裸属性（无 = 号）
+  m = inner.match(/<function\s+([a-zA-Z_][\w-]*)\s*>/i);
+  if (m) {
+    const candidate = m[1].trim();
+    const reserved = ['parameter', 'arg', 'name', 'function', 'tool_call', 'tool_result', 'arguments', 'parameters', 'input', 'tool_name'];
+    if (!reserved.includes(candidate.toLowerCase())) {
+      return candidate;
+    }
+  }
+
   return null;
 }
 
