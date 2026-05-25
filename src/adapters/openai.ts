@@ -277,6 +277,7 @@ export function registerOpenAI(app: Hono) {
             let thinkBuf = '';
             let toolCallBuf: string | null = null;
             let pendingText = '';
+            let contentBuf = ''; // 缓存所有 content，finish 时决定是否发送
 
             for await (const chunk of gen) {
               if (isAborted) { console.log('[STREAM] Aborted, stopping generation'); break; }
@@ -483,7 +484,7 @@ export function registerOpenAI(app: Hono) {
                 }
                 if (lastUsage) logRespObj.usage = { prompt_tokens: lastUsage.promptTokens, completion_tokens: lastUsage.completionTokens };
                 responseBodyStr = JSON.stringify(logRespObj);
-                await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, system_fingerprint: \`fp_mimo_\${created}\`, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage: usageChunk })}\n\n`);
+                await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, system_fingerprint: 'fp_mimo_' + created, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage: usageChunk })}\n\n`);
                 await s.write('data: [DONE]\n\n');
                 console.log('[STREAM] ✓ Completed:', { chunks: chunkCount, finishReason, tokens: lastUsage?.totalTokens || 0, duration: Date.now() - startTime + 'ms' });
               }
@@ -547,7 +548,7 @@ export function registerOpenAI(app: Hono) {
         });
       }
       return c.json({
-        id: responseId, object: 'chat.completion', created, model: mimoModel, system_fingerprint: \`fp_mimo_\${created}\`,
+        id: responseId, object: 'chat.completion', created, model: mimoModel, system_fingerprint: `fp_mimo_${created}`,
         choices: [{ index: 0, message: { role: 'assistant', content: sanitizeOutput(fullText) }, finish_reason: 'stop' }],
         usage: usageObj,
       });

@@ -349,11 +349,7 @@ export function registerAnthropic(app: Hono) {
                   } else {
                     if (responseThinkMode === 'separate') {
                       if (text) {
-<<<<<<< HEAD
-                        if (DEBUG) console.log('[DBG] Sending thinking_delta chunk:', JSON.stringify(text.slice(0, 50)));
-=======
                         debugLog('[DBG] Sending thinking_delta chunk:', JSON.stringify(text.slice(0, 50)));
->>>>>>> upstream/main
                         await sendEvent('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: text } });
                       }
                     } else if (responseThinkMode === 'passthrough') {
@@ -445,7 +441,6 @@ export function registerAnthropic(app: Hono) {
                   }
                 }
                 clearInterval(pingTimer!);
-<<<<<<< HEAD
                 // Build response body for logging
                 const logRespObj: any = { finish_reason: stopReason, content: responseContentBuf };
                 if (stopReason === 'tool_use' && toolCallBuf && hasToolCallMarker(toolCallBuf)) {
@@ -454,10 +449,7 @@ export function registerAnthropic(app: Hono) {
                 }
                 if (lastUsage) logRespObj.usage = { prompt_tokens: lastUsage.promptTokens, completion_tokens: lastUsage.completionTokens };
                 responseBodyStr = JSON.stringify(logRespObj);
-                await sendEvent('message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: lastUsage?.completionTokens ?? 0 } });
-=======
                 await sendEvent('message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: { input_tokens: lastUsage?.promptTokens ?? 0, output_tokens: lastUsage?.completionTokens ?? 0 } });
->>>>>>> upstream/main
                 await sendEvent('message_stop', { type: 'message_stop' });
                 console.log('[STREAM] ✓ Completed:', { events: eventCount, stopReason, tokens: lastUsage?.totalTokens || 0, duration: Date.now() - startTime + 'ms' });
               }
