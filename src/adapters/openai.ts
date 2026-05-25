@@ -3,7 +3,7 @@ import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
 import { decrementActive } from '../accounts.js';
 import { callMimo, MimoUsage, fetchBotConfig, getChatModels } from '../mimo/client.js';
-import { serializeMessages, ChatMessage } from '../mimo/serialize.js';
+import { serializeMessages, ChatMessage, sanitizeOutput } from '../mimo/serialize.js';
 import { config, debugLog } from '../config.js';
 import { buildToolSystemPrompt, ToolDefinition } from '../tools/prompt.js';
 import { parseToolCalls, hasToolCallMarker, findEarliestToolCallMarker } from '../tools/parser.js';
@@ -142,12 +142,15 @@ async function extractImages(account: Account, messages: Array<{ role: string; c
 
 function logRequest(data: {
   account_id: string;
+  session_id?: string | null;
   api_key_id: string | null;
   model: string;
   usage: MimoUsage | null;
   status: 'success' | 'error';
   error?: string;
   duration_ms: number;
+  request_body?: string | null;
+  response_body?: string | null;
 }) {
   logApiRequest({ ...data, endpoint: 'openai' });
 }
@@ -190,6 +193,7 @@ export function registerOpenAI(app: Hono) {
     const { account } = acquired;
 
     const body = await c.req.json();
+    const requestBody = JSON.stringify(body);
     console.log('[REQ] Body parsed:', { model: body.model || 'default', stream: body.stream ?? false, messages: body.messages?.length || 0, tools: body.tools?.length || 0, reasoning: !!body.reasoning_effort });
 
     const { messages: cleanedMsgs, medias } = await extractImages(account, body.messages ?? []);
@@ -247,6 +251,7 @@ export function registerOpenAI(app: Hono) {
           let isAborted = false;
           let chunkCount = 0;
           let loggedError = false;
+          let responseBodyStr: string | null = null;
 
           const req = c.req.raw as any;
           if (req.on) {
@@ -464,7 +469,15 @@ export function registerOpenAI(app: Hono) {
                     await sendDelta({ content: toolCallBuf });
                   }
                 }
-                await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, system_fingerprint: `fp_mimo_${created}`, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage: usageChunk })}\n\n`);
+                // Build response body for logging
+                const logRespObj: any = { finish_reason: finishReason };
+                if (finishReason === 'tool_calls' && toolCallBuf && hasToolCallMarker(toolCallBuf)) {
+                  const parsedCalls = parseToolCalls(toolCallBuf);
+                  if (parsedCalls.length > 0) logRespObj.tool_calls = parsedCalls.map(tc => ({ name: tc.name, arguments: tc.arguments }));
+                }
+                if (lastUsage) logRespObj.usage = { prompt_tokens: lastUsage.promptTokens, completion_tokens: lastUsage.completionTokens };
+                responseBodyStr = JSON.stringify(logRespObj);
+                await s.write(`data: ${JSON.stringify({ id: responseId, object: 'chat.completion.chunk', created, model: mimoModel, system_fingerprint: 'fp_mimo_' + created, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage: usageChunk })}\n\n`);
                 await s.write('data: [DONE]\n\n');
                 console.log('[STREAM] ✓ Completed:', { chunks: chunkCount, finishReason, tokens: lastUsage?.totalTokens || 0, duration: Date.now() - startTime + 'ms' });
               }
@@ -474,12 +487,12 @@ export function registerOpenAI(app: Hono) {
             if (!isAborted) {
               try { await s.write(`data: ${JSON.stringify({ error: { message: String(err), type: 'api_error' } })}\n\n`); await s.write('data: [DONE]\n\n'); } catch {}
             }
-            logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'error', error: String(err), duration_ms: Date.now() - startTime });
+            logRequest({ account_id: account.id, session_id: session.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'error', error: String(err), duration_ms: Date.now() - startTime, request_body: requestBody, response_body: responseBodyStr });
             loggedError = true;
           } finally {
             decrementActive(account.id);
             if (!loggedError) {
-              logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
+              logRequest({ account_id: account.id, session_id: session.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime, request_body: requestBody, response_body: responseBodyStr });
               if (lastUsage) {
                 updateSessionTokens(session.id, lastUsage.promptTokens);
               }
@@ -497,7 +510,8 @@ export function registerOpenAI(app: Hono) {
       }
 
       fullText = processThinkContent(fullText, config.thinkMode);
-      logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
+      const nonStreamRespBody = JSON.stringify({ content: sanitizeOutput(fullText), usage: lastUsage ? { prompt_tokens: lastUsage.promptTokens, completion_tokens: lastUsage.completionTokens } : undefined });
+      logRequest({ account_id: account.id, session_id: session.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime, request_body: requestBody, response_body: nonStreamRespBody });
       // 更新会话 token 统计
       if (lastUsage) {
         updateSessionTokens(session.id, lastUsage.promptTokens);
@@ -528,13 +542,13 @@ export function registerOpenAI(app: Hono) {
       }
       return c.json({
         id: responseId, object: 'chat.completion', created, model: mimoModel, system_fingerprint: `fp_mimo_${created}`,
-        choices: [{ index: 0, message: { role: 'assistant', content: fullText }, finish_reason: 'stop' }],
+        choices: [{ index: 0, message: { role: 'assistant', content: sanitizeOutput(fullText) }, finish_reason: 'stop' }],
         usage: usageObj,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       handleAccountError(account, msg);
-      logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: null, status: 'error', error: msg, duration_ms: Date.now() - startTime });
+      logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: null, status: 'error', error: msg, duration_ms: Date.now() - startTime, request_body: requestBody });
       return c.json({ error: { message: msg, type: 'api_error' } }, 502);
     } finally {
       if (!isStream) decrementActive(account.id);

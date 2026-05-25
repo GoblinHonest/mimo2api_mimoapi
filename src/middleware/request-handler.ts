@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { acquireAccount, decrementActive, markAccountInactive, Account } from '../accounts.js';
 import { validateApiKey, recordApiKeyUsage, ApiKey } from '../api-keys.js';
 import { config } from '../config.js';
-import { appendLog, RequestLogRecord } from '../db.js';
+import { db } from '../db.js';
 import { MimoUsage } from '../mimo/client.js';
 
 export interface RequestContext {
@@ -33,6 +33,7 @@ export function acquireAccountForRequest(apiKeyRecord: ApiKey): { account: Accou
 
 export function logApiRequest(data: {
   account_id: string;
+  session_id?: string | null;
   api_key_id: string | null;
   endpoint: 'openai' | 'anthropic';
   model: string;
@@ -40,24 +41,19 @@ export function logApiRequest(data: {
   status: 'success' | 'error';
   error?: string;
   duration_ms: number;
+  request_body?: string | null;
+  response_body?: string | null;
 }) {
-  const log: RequestLogRecord = {
-    id: randomUUID(),
-    account_id: data.account_id,
-    session_id: null,
-    api_key_id: data.api_key_id,
-    endpoint: data.endpoint,
-    model: data.model,
-    prompt_tokens: data.usage?.promptTokens ?? null,
-    completion_tokens: data.usage?.completionTokens ?? null,
-    reasoning_tokens: data.usage?.reasoningTokens ?? null,
-    duration_ms: data.duration_ms,
-    status: data.status,
-    error: data.error ?? null,
-    created_at: new Date().toLocaleString('sv-SE'),
-  };
-
-  appendLog(log);
+  db.prepare(
+    `INSERT INTO request_logs (id, account_id, session_id, api_key_id, endpoint, model, prompt_tokens, completion_tokens, reasoning_tokens, duration_ms, status, error, request_body, response_body, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    randomUUID(), data.account_id, data.session_id ?? null, data.api_key_id, data.endpoint, data.model,
+    data.usage?.promptTokens ?? null, data.usage?.completionTokens ?? null,
+    data.usage?.reasoningTokens ?? null, data.duration_ms,
+    data.status, data.error ?? null, data.request_body ?? null, data.response_body ?? null,
+    new Date().toLocaleString('sv-SE')
+  );
 }
 
 export function handleAccountError(account: Account, errorMsg: string) {

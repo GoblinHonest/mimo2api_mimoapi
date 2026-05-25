@@ -49,23 +49,30 @@ function cleanInvisibleChars(text: string): string {
 }
 
 // 改进的 JSON 修复
+function repairInvalidJsonEscapes(json: string): string {
+  return json.replace(/\\(?!["\\/bfnrtu])/g, () => '\\\\');
+}
+
 function repairJson(json: string): string {
   let repaired = json;
 
-  // 1. 移除尾随逗号
+  // 1. 修复 JSON 不支持的转义，例如 shell 字符串里的 \' 或 Windows 路径里的 \U
+  repaired = repairInvalidJsonEscapes(repaired);
+
+  // 2. 移除尾随逗号
   repaired = repaired.replace(/,(\s*[}\]])/g, '$1');
 
-  // 2. 移除开头逗号
+  // 3. 移除开头逗号
   repaired = repaired.replace(/([{\[])\s*,/g, '$1');
 
-  // 3. 移除注释（简单处理）
+  // 4. 移除注释（简单处理）
   repaired = repaired.replace(/\/\*[\s\S]*?\*\//g, '');
   repaired = repaired.replace(/\/\/.*/g, '');
 
-  // 4. 修复数字后多余的引号：123"}} -> 123}}
+  // 5. 修复数字后多余的引号：123"}} -> 123}}
   repaired = repaired.replace(/(\d+)"([}\],])/g, '$1$2');
 
-  // 5. 修复字符串值后缺少引号：": value, -> ": "value",
+  // 6. 修复字符串值后缺少引号：": value, -> ": "value",
   repaired = repaired.replace(/:\s*([^"{[\d\s][^,}\]]*?)([,}\]])/g, (match, value, end) => {
     const trimmed = value.trim();
     if (trimmed === 'true' || trimmed === 'false' || trimmed === 'null') {
@@ -84,36 +91,41 @@ function parseJsonSafely(text: string): any {
     return JSON.parse(text);
   } catch (firstError) {
     try {
-      // 尝试修复后解析
-      return JSON.parse(repairJson(text));
+      // 先做最小修复，避免后续宽松正则误伤命令字符串里的冒号、路径等内容
+      return JSON.parse(repairInvalidJsonEscapes(text));
     } catch (secondError) {
-      // 如果还是失败，尝试更激进的修复：
-      // 找到所有字符串值，并确保它们被正确转义
-      let fixed = text;
-      
-      // 匹配 "key": "value" 模式，其中 value 可能包含未转义的换行符
-      // 使用负向后查找确保引号前没有反斜杠
-      fixed = fixed.replace(/"([^"\\]*(?:\\.[^"\\]*)*)"/g, (match, content) => {
-        // 如果内容已经被正确转义，直接返回
-        if (!content.includes('\n') && !content.includes('\r') && !content.includes('\t')) {
-          return match;
-        }
-        
-        // 否则，重新转义
-        const escaped = content
-          .replace(/\n/g, '\\n')
-          .replace(/\r/g, '\\r')
-          .replace(/\t/g, '\\t');
-        
-        return `"${escaped}"`;
-      });
-      
       try {
-        return JSON.parse(fixed);
+        // 尝试完整修复后解析
+        return JSON.parse(repairJson(text));
       } catch (thirdError) {
-        // 最后尝试：移除所有实际的换行符，只保留转义的
-        const noNewlines = text.replace(/([^\\])\n/g, '$1\\n').replace(/([^\\])\r/g, '$1\\r');
-        return JSON.parse(noNewlines);
+        // 如果还是失败，尝试更激进的修复：
+        // 找到所有字符串值，并确保它们被正确转义
+        let fixed = repairInvalidJsonEscapes(text);
+        
+        // 匹配 "key": "value" 模式，其中 value 可能包含未转义的换行符
+        // 使用负向后查找确保引号前没有反斜杠
+        fixed = fixed.replace(/"([^"\\]*(?:\\.[^"\\]*)*)"/g, (match, content) => {
+          // 如果内容已经被正确转义，直接返回
+          if (!content.includes('\n') && !content.includes('\r') && !content.includes('\t')) {
+            return match;
+          }
+          
+          // 否则，重新转义
+          const escaped = content
+            .replace(/\n/g, '\\n')
+            .replace(/\r/g, '\\r')
+            .replace(/\t/g, '\\t');
+          
+          return `"${escaped}"`;
+        });
+        
+        try {
+          return JSON.parse(fixed);
+        } catch (fourthError) {
+          // 最后尝试：移除所有实际的换行符，只保留转义的
+          const noNewlines = repairInvalidJsonEscapes(text).replace(/([^\\])\n/g, '$1\\n').replace(/([^\\])\r/g, '$1\\r');
+          return JSON.parse(noNewlines);
+        }
       }
     }
   }
@@ -148,6 +160,91 @@ function parseValue(val: string): unknown {
     // 返回原始字符串
     return trimmed;
   }
+}
+
+function decodeLooseJsonStringContent(value: string): string {
+  let decoded = '';
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch !== '\\' || i === value.length - 1) {
+      decoded += ch;
+      continue;
+    }
+
+    const next = value[++i];
+    switch (next) {
+      case '"':
+      case '\\':
+      case '/':
+        decoded += next;
+        break;
+      case 'b':
+        decoded += '\b';
+        break;
+      case 'f':
+        decoded += '\f';
+        break;
+      case 'n':
+        decoded += '\n';
+        break;
+      case 'r':
+        decoded += '\r';
+        break;
+      case 't':
+        decoded += '\t';
+        break;
+      case 'u': {
+        const hex = value.slice(i + 1, i + 5);
+        if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+          decoded += String.fromCharCode(parseInt(hex, 16));
+          i += 4;
+        } else {
+          decoded += '\\u';
+        }
+        break;
+      }
+      default:
+        decoded += `\\${next}`;
+        break;
+    }
+  }
+  return decoded;
+}
+
+function extractLooseJsonStringField(text: string, field: string): string | undefined {
+  const markerRe = new RegExp(`"${field}"\\s*:\\s*"`, 'i');
+  const marker = markerRe.exec(text);
+  if (!marker || marker.index === undefined) return undefined;
+
+  const start = marker.index + marker[0].length;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] !== '"') continue;
+
+    const backslashes = text.slice(start, i).match(/\\+$/)?.[0].length ?? 0;
+    if (backslashes % 2 === 1) continue;
+
+    const rest = text.slice(i + 1);
+    if (/^\s*(?:[,}\]])/.test(rest)) {
+      return decodeLooseJsonStringContent(text.slice(start, i));
+    }
+  }
+
+  return undefined;
+}
+
+function parseLooseNamedJsonToolCall(text: string, callId: string): ParsedToolCall | null {
+  const name = extractLooseJsonStringField(text, 'name');
+  if (!name) return null;
+
+  const args: Record<string, unknown> = {};
+  const stringFields = ['command', 'file_path', 'path', 'content', 'old_string', 'new_string', 'pattern', 'url', 'query'];
+  for (const field of stringFields) {
+    const value = extractLooseJsonStringField(text, field);
+    if (value !== undefined) args[field] = value;
+  }
+
+  if (Object.keys(args).length === 0) return null;
+  return { id: callId, name, arguments: args };
 }
 
 // 改进的 XML 参数解析
@@ -393,6 +490,13 @@ function parseMimoNativeToolCalls(text: string): ParsedToolCall[] {
           continue;
         }
       } catch (err) {
+        const looseCall = parseLooseNamedJsonToolCall(inner, callId);
+        if (looseCall) {
+          log('info', `Parsed loose named JSON tool call: ${looseCall.name}`, { args: looseCall.arguments });
+          calls.push(looseCall);
+          continue;
+        }
+
         // 尝试解析多个 JSON 对象（当多个工具调用在一个 <tool_call> 块内时）
         const multiCalls = parseNamedJsonToolCalls(inner);
         if (multiCalls.length > 0) {
@@ -642,7 +746,7 @@ function parseDirectToolNameFormat(text: string): ParsedToolCall[] {
   let match: RegExpExecArray | null;
   let count = 0;
 
-  const excludedTags = ['div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u', 'todo', 'todo_list', 'thinking', 'result', 'task_progress', 'path', 'name', 'content', 'question', 'options'];
+  const excludedTags = ['div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u', 'todo', 'todo_list', 'think', 'thinking', 'result', 'task_progress', 'path', 'name', 'content', 'question', 'options'];
 
   while ((match = directToolRe.exec(cleanText)) !== null) {
     if (++count > CONFIG.MAX_TOOL_CALLS) {
@@ -931,7 +1035,7 @@ export function hasToolCallMarker(text: string): boolean {
   if (match) {
     const tagName = match[1].toLowerCase();
     // 排除常见的 HTML/Markdown 标签
-    const excludedTags = ['div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u', 'thinking', 'result', 'task_progress', 'path', 'name', 'content', 'question', 'options'];
+    const excludedTags = ['div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u', 'think', 'thinking', 'result', 'task_progress', 'path', 'name', 'content', 'question', 'options'];
     if (!excludedTags.includes(tagName)) {
       return true;
     }

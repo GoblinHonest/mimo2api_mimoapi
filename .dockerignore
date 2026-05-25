@@ -6,6 +6,7 @@ dist
 *.log
 data
 logs
+dbdata
 .claude
 README.md
 docker-compose.yml

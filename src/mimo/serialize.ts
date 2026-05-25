@@ -89,6 +89,40 @@ function sanitizeContent(content: string | null, role: string): string {
 }
 
 /**
+ * 清理 MiMo 响应输出中的系统内部标签
+ * MiMo 有时会在响应中包含这些标签（如 <toolcall_status>、<toolcall_result> 等），
+ * 需要在返回给客户端前移除
+ */
+export function sanitizeOutput(text: string): string {
+  if (!text) return text;
+
+  let cleaned = text.replace(/\u0000/g, '');
+
+  // 移除完整的标签对（包括内容）
+  for (const tag of SYSTEM_TAGS) {
+    const regex = new RegExp(`<${tag}>[\s\S]*?</${tag}>`, 'g');
+    cleaned = cleaned.replace(regex, '');
+  }
+
+  // 移除自闭合标签
+  for (const tag of SYSTEM_TAGS) {
+    const regex = new RegExp(`<${tag}\s*/>`, 'g');
+    cleaned = cleaned.replace(regex, '');
+  }
+
+  // 移除单独的开闭标签
+  for (const tag of SYSTEM_TAGS) {
+    cleaned = cleaned.replace(new RegExp(`<${tag}>`, 'g'), '');
+    cleaned = cleaned.replace(new RegExp(`</${tag}>`, 'g'), '');
+  }
+
+  // 清理多余的空行
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+
+  return cleaned;
+}
+
+/**
  * 格式化单条消息用于对话历史，保留工具调用上下文
  */
 function formatMessageForHistory(m: ChatMessage): string {
@@ -99,7 +133,7 @@ function formatMessageForHistory(m: ChatMessage): string {
       return `${tc.function.name}(${args})`;
     }).join('\n');
     const contentPart = m.content ? `\n${m.content}` : '';
-    return `assistant: [Tool Calls]\n${callsStr}${contentPart}`;
+    return `assistant: [调用工具]\n${callsStr}${contentPart}`;
   }
 
   // tool 消息：显示工具结果（附带 tool_call_id 以关联调用）
@@ -125,24 +159,34 @@ export function serializeMessages(messages: ChatMessage[]): string {
   const truncated = rest.slice(-config.maxReplayMessages);
   const msgs = [...system, ...truncated];
 
-  const parts: string[] = [];
-
-  const sysContent = system.map(m => m.content).join('\n');
-  if (sysContent) parts.push(`[System Instruction]\n${sysContent}`);
-
   const nonSystem = msgs.filter(m => m.role !== 'system');
   const dialogHistory = nonSystem.slice(0, -1);
   const lastMsg = nonSystem[nonSystem.length - 1];
 
-  if (dialogHistory.length > 0) {
-    const histStr = dialogHistory.map(m => formatMessageForHistory(m)).join('\n');
-    parts.push(`[Conversation History]\n${histStr}`);
+  const parts: string[] = [];
+
+  let sysContent = system.map(m => m.content).join('\n');
+  const hasChinese = /[\u4e00-\u9fa5]/.test(lastMsg?.content ?? '');
+  if (hasChinese) {
+    const langPrompt = '【重要重要要求】无论系统指令使用的是何种语言，如果用户的当前问题是中文，请务必使用中文进行回答、总结和输出。';
+    if (sysContent) {
+      sysContent += `\n\n${langPrompt}`;
+    } else {
+      sysContent = langPrompt;
+    }
   }
 
-  if (lastMsg) parts.push(`[Current Query]\n${formatMessageForHistory(lastMsg)}`);
+  if (sysContent) parts.push(`[系统指令]\n${sysContent}`);
+
+  if (dialogHistory.length > 0) {
+    const histStr = dialogHistory.map(m => formatMessageForHistory(m)).join('\n');
+    parts.push(`[对话历史]\n${histStr}`);
+  }
+
+  if (lastMsg) parts.push(`[当前问题]\n${formatMessageForHistory(lastMsg)}`);
 
   // 强制截断以确保不超过 MiMo 限制
-  const sysStr = sysContent ? `[System Instruction]\n${sysContent}` : '';
+  const sysStr = sysContent ? `[系统指令]\n${sysContent}` : '';
   const restStr = parts.slice(sysContent ? 1 : 0).join('\n\n');
 
   // 计算剩余可用空间
@@ -153,7 +197,7 @@ export function serializeMessages(messages: ChatMessage[]): string {
   if (sysStr.length > config.maxQueryChars * 0.6) {
     // System prompt 最多占 60%
     const maxSys = Math.floor(config.maxQueryChars * 0.6);
-    finalSysStr = sysStr.slice(0, maxSys) + '\n...(tool definitions truncated)';
+    finalSysStr = sysStr.slice(0, maxSys) + '\n...(工具定义已截断)';
     maxRest = config.maxQueryChars - finalSysStr.length - 2;
     console.log('[SERIALIZE] ⚠️ System prompt truncated:', {
       original: sysStr.length,
@@ -164,7 +208,7 @@ export function serializeMessages(messages: ChatMessage[]): string {
 
   // 截断对话历史和当前消息
   const truncatedRest = maxRest > 0 && restStr.length > maxRest
-    ? '...(history truncated)\n\n' + restStr.slice(-maxRest + 30)
+    ? '...(历史消息已截断)\n\n' + restStr.slice(-maxRest + 30)
     : restStr;
 
   const result = finalSysStr ? `${finalSysStr}\n\n${truncatedRest}` : truncatedRest;
@@ -196,5 +240,5 @@ export function extractLastUserMessage(messages: ChatMessage[]): string {
   const lastUser = userMsgs[userMsgs.length - 1]?.content ?? '';
   if (system.length === 0) return lastUser;
   const sysContent = system.map(m => m.content).join('\n');
-  return `[System Instruction]\n${sysContent}\n\n[Current Query]\n${lastUser}`;
+  return `[系统指令]\n${sysContent}\n\n[当前问题]\n${lastUser}`;
 }

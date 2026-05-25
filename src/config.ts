@@ -1,4 +1,4 @@
-import { loadConfig as loadJsonConfig, saveConfig, ConfigData } from './db.js';
+import { db } from './db.js';
 
 const DEFAULTS = {
   port: 8080,
@@ -10,43 +10,36 @@ const DEFAULTS = {
   thinkMode: 'separate' as 'passthrough' | 'strip' | 'separate',
   sessionTtlDays: 7,
   sessionIsolation: 'auto' as 'manual' | 'auto' | 'per-request',
+  mimoProxy: '',
 };
 
 export const config: typeof DEFAULTS = { ...DEFAULTS };
 
 export function loadConfig() {
-  const data = loadJsonConfig();
+  const rows = db.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;
+  const map = new Map(rows.map(r => [r.key, r.value]));
 
   const numKeys: Array<keyof typeof DEFAULTS> = [
     'port', 'maxReplayMessages', 'maxQueryChars',
     'contextResetThreshold', 'maxConcurrentPerAccount', 'sessionTtlDays',
   ];
   for (const key of numKeys) {
-    if (data[key] !== undefined) {
-      const v = Number(data[key]);
+    if (map.has(key)) {
+      const v = Number(map.get(key));
       if (!isNaN(v)) (config as Record<string, unknown>)[key] = v;
     }
   }
 
-  if (data.adminKey) config.adminKey = data.adminKey;
-  if (data.thinkMode && ['passthrough', 'strip', 'separate'].includes(data.thinkMode)) {
-    config.thinkMode = data.thinkMode;
+  if (map.has('adminKey')) config.adminKey = map.get('adminKey')!;
+  if (map.has('mimoProxy')) config.mimoProxy = map.get('mimoProxy')!.trim();
+  if (map.has('thinkMode') && ['passthrough', 'strip', 'separate'].includes(map.get('thinkMode')!)) {
+    config.thinkMode = map.get('thinkMode') as typeof config.thinkMode;
   }
-  if (data.sessionIsolation && ['manual', 'auto', 'per-request'].includes(data.sessionIsolation)) {
-    config.sessionIsolation = data.sessionIsolation;
+  if (map.has('sessionIsolation') && ['manual', 'auto', 'per-request'].includes(map.get('sessionIsolation')!)) {
+    config.sessionIsolation = map.get('sessionIsolation') as typeof config.sessionIsolation;
   }
 
-  console.log('[CONFIG] Loaded from JSON:', {
-    port: config.port,
-    adminKey: config.adminKey,
-    maxReplayMessages: config.maxReplayMessages,
-    maxQueryChars: config.maxQueryChars,
-    contextResetThreshold: config.contextResetThreshold,
-    maxConcurrentPerAccount: config.maxConcurrentPerAccount,
-    thinkMode: config.thinkMode,
-    sessionTtlDays: config.sessionTtlDays,
-    sessionIsolation: config.sessionIsolation,
-  });
+  console.log('[CONFIG] Loaded from database:', Object.fromEntries(map));
 }
 
 export const DEBUG = !!(process.env.DEBUG ?? process.env.NODE_ENV !== 'production');
@@ -55,7 +48,14 @@ export function debugLog(...args: unknown[]) {
 }
 
 export function saveSetting(key: string, value: string) {
-  const data = loadJsonConfig();
-  (data as Record<string, unknown>)[key] = value;
-  saveConfig(data);
+  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+  // Also apply to in-memory config immediately
+  if (key in config) {
+    if (typeof (config as Record<string, unknown>)[key] === 'number') {
+      const v = Number(value);
+      if (!isNaN(v)) (config as Record<string, unknown>)[key] = v;
+    } else {
+      (config as Record<string, unknown>)[key] = value;
+    }
+  }
 }

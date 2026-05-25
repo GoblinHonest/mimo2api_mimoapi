@@ -9,7 +9,7 @@
     "build:css": "npx @tailwindcss/cli -i src/web/input.css -o src/web/style.css --minify",
     "build:assets": "cp node_modules/chart.js/dist/chart.umd.min.js src/web/chart.js",
     "build:ts": "tsc",
-    "build:web": "cp -r src/web dist/web",
+    "build:web": "node -e \"const fs=require('fs'); fs.rmSync('dist/web', {recursive:true, force:true}); fs.cpSync('src/web', 'dist/web', {recursive:true})\"",
     "build": "npm run build:css && npm run build:assets && npm run build:ts && npm run build:web",
     "dev:css": "npx @tailwindcss/cli -i src/web/input.css -o src/web/style.css --watch"
   },
@@ -18,14 +18,18 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@esbuild/darwin-arm64": "^0.28.0",
     "@hono/node-server": "^2.0.3",
-    "hono": "^4.12.9"
+    "better-sqlite3": "^12.8.0",
+    "chart.js": "^4.5.1",
+    "hono": "^4.12.9",
+    "undici": "^7.25.0"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.2.2",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
     "@types/ws": "^8.18.1",
-    "chart.js": "^4.5.1",
     "tailwindcss": "^4.2.2",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2"

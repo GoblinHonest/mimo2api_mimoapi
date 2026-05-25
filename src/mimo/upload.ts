@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { Account } from '../accounts.js';
+import { getMimoProxyFetchOptions } from './proxy-agent.js';
 
 const BASE_URL = 'https://aistudio.xiaomimimo.com';
 
@@ -66,7 +67,8 @@ export async function uploadImageToMimo(account: Account, imageData: Buffer, mim
       method: 'POST',
       headers: makeHeaders(account),
       body: JSON.stringify({ fileName, fileContentMd5: md5 }),
-    }
+      ...getMimoProxyFetchOptions(),
+    } as RequestInit
   );
   if (!infoResp.ok) throw new Error(`genUploadInfo failed: ${infoResp.status}`);
   const infoJson = await infoResp.json() as { code: number; data: { resourceUrl: string; uploadUrl: string } };
@@ -87,7 +89,7 @@ export async function uploadImageToMimo(account: Account, imageData: Buffer, mim
   // Step 3: parse (register resource)
   const parseResp = await fetch(
     `${BASE_URL}/open-apis/resource/parse?fileUrl=${encodeURIComponent(resourceUrl)}&xiaomichatbot_ph=${ph}`,
-    { method: 'POST', headers: makeHeaders(account) }
+    { method: 'POST', headers: makeHeaders(account), ...getMimoProxyFetchOptions() } as RequestInit
   );
   if (!parseResp.ok) throw new Error(`parse failed: ${parseResp.status}`);
 

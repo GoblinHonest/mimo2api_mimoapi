@@ -3,7 +3,7 @@ import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
 import { decrementActive } from '../accounts.js';
 import { callMimo, MimoUsage, fetchBotConfig } from '../mimo/client.js';
-import { serializeMessages, ChatMessage } from '../mimo/serialize.js';
+import { serializeMessages, ChatMessage, sanitizeOutput } from '../mimo/serialize.js';
 import { config, debugLog } from '../config.js';
 import { buildToolSystemPrompt, ToolDefinition } from '../tools/prompt.js';
 import { parseToolCalls, hasToolCallMarker, findEarliestToolCallMarker } from '../tools/parser.js';
@@ -13,6 +13,8 @@ import { Account } from '../accounts.js';
 import { getOrCreateSession, updateSessionTokens } from '../mimo/session.js';
 import { extractApiKey, authenticateRequest, acquireAccountForRequest, logApiRequest, handleAccountError } from '../middleware/request-handler.js';
 import { generateClientSessionId } from '../mimo/session-marker.js';
+
+const DEBUG = process.env.DEBUG_MIMO === '1' || process.env.DEBUG_MIMO === 'true';
 
 // 静态 fallback
 const MODEL_MAP: Record<string, string> = {
@@ -63,12 +65,15 @@ function resolveModel(model: string): string {
 
 function logRequest(data: {
   account_id: string;
+  session_id?: string | null;
   api_key_id: string | null;
   model: string;
   usage: MimoUsage | null;
   status: 'success' | 'error';
   error?: string;
   duration_ms: number;
+  request_body?: string | null;
+  response_body?: string | null;
 }) {
   logApiRequest({ ...data, endpoint: 'anthropic' });
 }
@@ -131,7 +136,7 @@ function buildMessages(body: Record<string, unknown>): ChatMessage[] {
         } else if (b.type === 'tool_result') {
           const resultContent = typeof b.content === 'string' ? b.content
             : Array.isArray(b.content) ? (b.content as Array<{type:string;text?:string}>).filter(x=>x.type==='text').map(x=>x.text??'').join('') : JSON.stringify(b.content);
-          parts.push(`[Tool Result]\n${resultContent}`);
+          parts.push(`[工具结果]\n${resultContent}`);
         }
       }
       content = parts.join('\n');
@@ -152,26 +157,46 @@ function processThinkContent(text: string): { thinkContent: string; mainContent:
   return { thinkContent: '', mainContent: text };
 }
 
+function previewApiKey(apiKey: string): string {
+  if (!apiKey) return 'missing';
+  if (apiKey.length <= 12) return `${apiKey.slice(0, 4)}...`;
+  return `${apiKey.slice(0, 8)}...${apiKey.slice(-4)}`;
+}
+
 export function registerAnthropic(app: Hono) {
   app.post('/v1/messages', async (c) => {
     console.log('\n[REQ] ========== New Anthropic Request ==========');
+    console.log('[REQ] Method/Path:', c.req.method, c.req.path);
 
     const apiKey = extractApiKey(c);
+    console.log('[AUTH] API key:', previewApiKey(apiKey));
 
     // 1. 认证检查
     const apiKeyRecord = authenticateRequest(apiKey);
     if (!apiKeyRecord) {
+      console.warn('[AUTH] Failed:', apiKey ? 'invalid API key' : 'missing API key');
       return c.json({ type: 'error', error: { type: 'authentication_error', message: apiKey ? 'Invalid API key' : 'Missing API key' } }, 401);
     }
+    console.log('[AUTH] OK:', { apiKeyId: apiKeyRecord.id, name: apiKeyRecord.name });
 
     // 2. 原子性选择账号并递增并发计数
     const acquired = acquireAccountForRequest(apiKeyRecord);
     if (!acquired) {
+      console.warn('[ACCOUNT] No active account available');
       return c.json({ type: 'error', error: { type: 'service_error', message: 'No active account available' } }, 503);
     }
     const { account } = acquired;
+    console.log('[ACCOUNT] Acquired:', { accountId: account.id, alias: account.alias, activeRequests: account.active_requests });
 
-    const body = await c.req.json();
+    let body: Record<string, any>;
+    try {
+      body = await c.req.json();
+    } catch (err) {
+      console.error('[REQ] Failed to parse JSON body:', err);
+      decrementActive(account.id);
+      return c.json({ type: 'error', error: { type: 'invalid_request_error', message: 'Invalid JSON body' } }, 400);
+    }
+    const requestBody = JSON.stringify(body);
     console.log('[REQ] Body parsed:', { model: body.model || 'default', stream: body.stream ?? false, messages: body.messages?.length || 0, tools: body.tools?.length || 0, thinking: body.thinking?.type === 'enabled' });
     console.log('[ANT] tools:', JSON.stringify(body.tools?.map((t: Record<string,unknown>) => t.name ?? t.function) ?? null));
 
@@ -179,6 +204,7 @@ export function registerAnthropic(app: Hono) {
     const mimoModel = await getResolvedModel(body.model ?? '');
     const isStream: boolean = body.stream ?? false;
     const enableThinking: boolean = body.thinking?.type === 'enabled';
+    const responseThinkMode = enableThinking ? config.thinkMode : 'strip';
     const tools: ToolDefinition[] | undefined = body.tools?.length ? body.tools : undefined;
     let messages = buildMessages(body);
     if (tools) {
@@ -228,6 +254,8 @@ export function registerAnthropic(app: Hono) {
           let isAborted = false;
           let eventCount = 0;
           let loggedError = false;
+          let responseBodyStr: string | null = null;
+          let responseContentBuf = '';
 
           const req = c.req.raw as any;
           if (req.on) {
@@ -243,6 +271,13 @@ export function registerAnthropic(app: Hono) {
             try {
               await s.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
               eventCount++;
+              // Track text content for response logging
+              if (event === 'content_block_delta') {
+                const d = data as any;
+                if (d?.delta?.type === 'text_delta' && d?.delta?.text) {
+                  responseContentBuf += d.delta.text;
+                }
+              }
             } catch (err) {
               console.error('[STREAM] ❌ Write error:', err);
               isAborted = true;
@@ -286,7 +321,7 @@ export function registerAnthropic(app: Hono) {
                   if (!thinkingStarted && text.includes('<think>')) {
                     thinkingStarted = true;
                     text = text.replace('<think>', '');
-                    if (config.thinkMode === 'separate') {
+                    if (responseThinkMode === 'separate') {
                       await sendEvent('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } });
                       firstBlockSent = true;
                     } else if (!firstBlockSent) {
@@ -299,25 +334,25 @@ export function registerAnthropic(app: Hono) {
                     pastThink = true;
                     const thinkPart = text.slice(0, closeIdx);
                     const afterThink = text.slice(closeIdx + 8).trimStart();
-                    if (config.thinkMode === 'separate') {
+                    if (responseThinkMode === 'separate') {
                       if (thinkPart) {
                         debugLog('[DBG] Sending thinking_delta:', JSON.stringify(thinkPart.slice(0, 50)));
                         await sendEvent('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: thinkPart } });
                       }
                       await sendEvent('content_block_stop', { type: 'content_block_stop', index: 0 });
                       await sendEvent('content_block_start', { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } });
-                    } else if (config.thinkMode === 'passthrough') {
+                    } else if (responseThinkMode === 'passthrough') {
                       thinkBuf += thinkPart;
                       await sendEvent('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '<think>' + thinkBuf + '</think>' } });
                     }
                     if (afterThink) { text = afterThink; } else { continue; }
                   } else {
-                    if (config.thinkMode === 'separate') {
+                    if (responseThinkMode === 'separate') {
                       if (text) {
                         debugLog('[DBG] Sending thinking_delta chunk:', JSON.stringify(text.slice(0, 50)));
                         await sendEvent('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: text } });
                       }
-                    } else if (config.thinkMode === 'passthrough') {
+                    } else if (responseThinkMode === 'passthrough') {
                       thinkBuf += text;
                     }
                     continue;
@@ -330,7 +365,7 @@ export function registerAnthropic(app: Hono) {
                   if (t2Idx !== -1) text = text.slice(0, t2Idx);
                   if (!text) continue;
                   
-                  const idx = config.thinkMode === 'separate' ? 1 : 0;
+                  const idx = responseThinkMode === 'separate' ? 1 : 0;
                   if (toolCallBuf !== null) {
                     toolCallBuf += text;
                   } else {
@@ -359,21 +394,21 @@ export function registerAnthropic(app: Hono) {
                 }
                 if (!pastThink && thinkingStarted) {
                   pastThink = true;
-                  if (config.thinkMode === 'separate') {
+                  if (responseThinkMode === 'separate') {
                     await sendEvent('content_block_stop', { type: 'content_block_stop', index: 0 });
                     await sendEvent('content_block_start', { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } });
-                  } else if (config.thinkMode === 'passthrough') {
+                  } else if (responseThinkMode === 'passthrough') {
                     await sendEvent('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '<think>' + thinkBuf + '</think>' } });
                   }
                 }
                 if (pendingText) {
-                  const idx2 = config.thinkMode === 'separate' ? 1 : 0;
+                  const idx2 = responseThinkMode === 'separate' ? 1 : 0;
                   if (toolCallBuf !== null) toolCallBuf += pendingText;
                   else if (hasToolCallMarker(pendingText)) toolCallBuf = pendingText;
-                  else await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx2, delta: { type: 'text_delta', text: pendingText } });
+                  else await sendEvent('content_block_delta', { type: 'content_block_delta', index: idx2, delta: { type: 'text_delta', text: sanitizeOutput(pendingText) } });
                   pendingText = '';
                 }
-                const lastIdx = config.thinkMode === 'separate' && pastThink ? 1 : 0;
+                const lastIdx = responseThinkMode === 'separate' && pastThink ? 1 : 0;
                 await sendEvent('content_block_stop', { type: 'content_block_stop', index: lastIdx });
                 let stopReason = 'end_turn';
                 if (toolCallBuf && hasToolCallMarker(toolCallBuf)) {
@@ -406,6 +441,14 @@ export function registerAnthropic(app: Hono) {
                   }
                 }
                 clearInterval(pingTimer!);
+                // Build response body for logging
+                const logRespObj: any = { finish_reason: stopReason, content: responseContentBuf };
+                if (stopReason === 'tool_use' && toolCallBuf && hasToolCallMarker(toolCallBuf)) {
+                  const parsedCalls = parseToolCalls(toolCallBuf);
+                  if (parsedCalls.length > 0) logRespObj.tool_calls = parsedCalls.map(tc => ({ name: tc.name, arguments: tc.arguments }));
+                }
+                if (lastUsage) logRespObj.usage = { prompt_tokens: lastUsage.promptTokens, completion_tokens: lastUsage.completionTokens };
+                responseBodyStr = JSON.stringify(logRespObj);
                 await sendEvent('message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: { input_tokens: lastUsage?.promptTokens ?? 0, output_tokens: lastUsage?.completionTokens ?? 0 } });
                 await sendEvent('message_stop', { type: 'message_stop' });
                 console.log('[STREAM] ✓ Completed:', { events: eventCount, stopReason, tokens: lastUsage?.totalTokens || 0, duration: Date.now() - startTime + 'ms' });
@@ -416,13 +459,13 @@ export function registerAnthropic(app: Hono) {
             if (!isAborted) {
               try { await sendEvent('error', { type: 'error', error: { type: 'api_error', message: String(err) } }); } catch {}
             }
-            logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'error', error: String(err), duration_ms: Date.now() - startTime });
+            logRequest({ account_id: account.id, session_id: session.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'error', error: String(err), duration_ms: Date.now() - startTime, request_body: requestBody, response_body: responseBodyStr });
             loggedError = true;
           } finally {
             if (pingTimer) clearInterval(pingTimer);
             decrementActive(account.id);
             if (!loggedError) {
-              logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
+              logRequest({ account_id: account.id, session_id: session.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime, request_body: requestBody, response_body: responseBodyStr });
               if (lastUsage) {
                 updateSessionTokens(session.id, lastUsage.promptTokens);
               }
@@ -439,16 +482,16 @@ export function registerAnthropic(app: Hono) {
         else if (chunk.type === 'usage') lastUsage = chunk.usage!;
       }
       
-      if (config.thinkMode === 'strip') {
+      if (responseThinkMode === 'strip') {
         fullText = fullText.replace(/<think>[\s\S]*?<\/think>/g, '').trimStart();
       }
       const content: unknown[] = [];
-      if (config.thinkMode === 'separate') {
+      if (responseThinkMode === 'separate') {
         const { thinkContent, mainContent } = processThinkContent(fullText);
         if (thinkContent) content.push({ type: 'thinking', thinking: thinkContent });
-        content.push({ type: 'text', text: mainContent });
+        content.push({ type: 'text', text: sanitizeOutput(mainContent) });
       } else {
-        content.push({ type: 'text', text: fullText });
+        content.push({ type: 'text', text: sanitizeOutput(fullText) });
       }
       let stopReason = 'end_turn';
       if (hasToolCallMarker(fullText)) {
@@ -458,7 +501,8 @@ export function registerAnthropic(app: Hono) {
           for (const block of toAnthropicToolUse(calls)) content.push(block);
         }
       }
-      logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime });
+      const nonStreamRespBody = JSON.stringify({ content: sanitizeOutput(fullText), usage: lastUsage ? { prompt_tokens: lastUsage.promptTokens, completion_tokens: lastUsage.completionTokens } : undefined });
+      logRequest({ account_id: account.id, session_id: session.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'success', duration_ms: Date.now() - startTime, request_body: requestBody, response_body: nonStreamRespBody });
       // 更新会话 token 统计
       if (lastUsage) {
         updateSessionTokens(session.id, lastUsage.promptTokens);
@@ -471,7 +515,7 @@ export function registerAnthropic(app: Hono) {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       handleAccountError(account, msg);
-      logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: null, status: 'error', error: msg, duration_ms: Date.now() - startTime });
+      logRequest({ account_id: account.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: null, status: 'error', error: msg, duration_ms: Date.now() - startTime, request_body: requestBody });
       return c.json({ type: 'error', error: { type: 'api_error', message: msg } }, 502);
     } finally {
       if (!isStream) decrementActive(account.id);

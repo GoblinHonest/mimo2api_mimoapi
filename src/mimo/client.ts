@@ -1,6 +1,9 @@
 import { Account } from '../accounts.js';
 import { randomUUID } from 'crypto';
 import { MimoMedia } from './upload.js';
+import { getMimoProxyFetchOptions } from './proxy-agent.js';
+
+const DEBUG = process.env.DEBUG_MIMO === '1' || process.env.DEBUG_MIMO === 'true';
 
 export interface MimoUsage {
   promptTokens: number;
@@ -38,30 +41,46 @@ let cachedBotConfig: BotConfig | null = null;
 let configCacheTime = 0;
 const CONFIG_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-export async function fetchBotConfig(): Promise<BotConfig> {
+export async function fetchBotConfig(forceRefresh = false): Promise<BotConfig> {
   const now = Date.now();
-  if (cachedBotConfig && (now - configCacheTime) < CONFIG_CACHE_TTL) {
+  if (!forceRefresh && cachedBotConfig && (now - configCacheTime) < CONFIG_CACHE_TTL) {
     return cachedBotConfig;
   }
 
-  const resp = await fetch(CONFIG_URL, {
-    headers: {
-      'Accept': '*/*',
-      'Content-Type': 'application/json',
-      'Origin': 'https://aistudio.xiaomimimo.com',
-      'Referer': 'https://aistudio.xiaomimimo.com/',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    },
-  });
+  const maxAttempts = 3;
+  let lastError: any = null;
 
-  if (!resp.ok) {
-    throw new Error(`Failed to fetch bot config: ${resp.status}`);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const resp = await fetch(CONFIG_URL, {
+        headers: {
+          'Accept': '*/*',
+          'Content-Type': 'application/json',
+          'Origin': 'https://aistudio.xiaomimimo.com',
+          'Referer': 'https://aistudio.xiaomimimo.com/',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+        ...getMimoProxyFetchOptions(),
+      } as RequestInit);
+
+      if (!resp.ok) {
+        throw new Error(`Failed to fetch bot config: ${resp.status}`);
+      }
+
+      const json = await resp.json() as BotConfigResponse;
+      cachedBotConfig = json.data;
+      configCacheTime = now;
+      return cachedBotConfig;
+    } catch (err) {
+      console.warn(`[Proxy] Attempt ${attempt} to fetch bot config failed:`, err);
+      lastError = err;
+      if (attempt < maxAttempts) {
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+      }
+    }
   }
 
-  const json = await resp.json() as BotConfigResponse;
-  cachedBotConfig = json.data;
-  configCacheTime = now;
-  return cachedBotConfig;
+  throw lastError || new Error('Failed to fetch bot config after retries');
 }
 
 export function getChatModels(): string[] {
@@ -100,34 +119,54 @@ export async function* callMimo(
   });
 
   const url = `${API_URL}?xiaomichatbot_ph=${encodeURIComponent(account.ph_token)}`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Cookie': `serviceToken=${account.service_token}; userId=${account.user_id}; xiaomichatbot_ph=${account.ph_token}`,
-      'Origin': 'https://aistudio.xiaomimimo.com',
-      'Referer': 'https://aistudio.xiaomimimo.com/',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'x-timezone': 'Asia/Shanghai',
-    },
-    body: JSON.stringify(body),
-  });
+  const maxAttempts = 3;
+  let resp: Response | null = null;
+  let lastError: any = null;
 
-  if (!resp.ok) {
-    // 尝试读取错误响应内容
-    let errorBody = '';
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      errorBody = await resp.text();
-      console.error('[MIMO] ❌ Error response:', {
-        status: resp.status,
-        statusText: resp.statusText,
-        headers: Object.fromEntries(resp.headers.entries()),
-        body: errorBody
-      });
-    } catch (e) {
-      console.error('[MIMO] ❌ Failed to read error body:', e);
+      resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': `serviceToken=${account.service_token}; userId=${account.user_id}; xiaomichatbot_ph=${account.ph_token}`,
+          'Origin': 'https://aistudio.xiaomimimo.com',
+          'Referer': 'https://aistudio.xiaomimimo.com/',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'x-timezone': 'Asia/Shanghai',
+        },
+        body: JSON.stringify(body),
+        ...getMimoProxyFetchOptions(),
+      } as RequestInit);
+
+      if (!resp.ok) {
+        // 尝试读取错误响应内容
+        let errorBody = '';
+        try {
+          errorBody = await resp.text();
+          console.error('[MIMO] ❌ Error response:', {
+            status: resp.status,
+            statusText: resp.statusText,
+            headers: Object.fromEntries(resp.headers.entries()),
+            body: errorBody
+          });
+        } catch (e) {
+          console.error('[MIMO] ❌ Failed to read error body:', e);
+        }
+        throw new Error(`MiMo error: ${resp.status} - ${errorBody.slice(0, 500)}`);
+      }
+      break; // Success
+    } catch (err) {
+      console.warn(`[Proxy] Attempt ${attempt} to call MiMo API failed:`, err);
+      lastError = err;
+      if (attempt < maxAttempts) {
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+      }
     }
-    throw new Error(`MiMo error: ${resp.status} - ${errorBody.slice(0, 500)}`);
+  }
+
+  if (!resp || !resp.ok) {
+    throw lastError || new Error('Failed to call MiMo API after retries');
   }
   if (!resp.body) throw new Error('No response body');
 
@@ -148,17 +187,17 @@ export async function* callMimo(
 
     for (const line of lines) {
       const trimmed = line.trim();
-      console.log('[MIMO:RAW]', line);
+      if (DEBUG) console.log('[MIMO:RAW]', line);
       if (trimmed.startsWith('event:')) {
         event = trimmed.slice(6).trim();
       } else if (trimmed.startsWith('data:')) {
         try {
           const data = JSON.parse(trimmed.slice(5).trim());
           if (event === 'message') {
-            console.log('[MIMO:DEBUG] Message event data:', JSON.stringify(data).slice(0, 500));
+            if (DEBUG) console.log('[MIMO:DEBUG] Message event data:', JSON.stringify(data).slice(0, 500));
             yield { type: 'text', content: data.content ?? '' };
           } else if (event === 'usage') {
-            console.log('[MIMO:DEBUG] Usage event data:', JSON.stringify(data));
+            if (DEBUG) console.log('[MIMO:DEBUG] Usage event data:', JSON.stringify(data));
             yield {
               type: 'usage',
               usage: {
@@ -169,13 +208,13 @@ export async function* callMimo(
               },
             };
           } else if (event === 'finish') {
-            console.log('[MIMO:DEBUG] Finish event received');
+            if (DEBUG) console.log('[MIMO:DEBUG] Finish event received');
             yield { type: 'finish' };
           } else if (event === 'dialogId') {
-            console.log('[MIMO:DEBUG] DialogId event:', data.content);
+            if (DEBUG) console.log('[MIMO:DEBUG] DialogId event:', data.content);
             yield { type: 'dialogId', content: data.content };
           } else {
-            console.log('[MIMO:DEBUG] Unknown event type:', event, data);
+            if (DEBUG) console.log('[MIMO:DEBUG] Unknown event type:', event, data);
           }
         } catch (e) {
           console.error('[MIMO:ERROR] Failed to parse SSE data:', trimmed.slice(5).trim(), e);

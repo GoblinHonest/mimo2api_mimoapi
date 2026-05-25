@@ -94,17 +94,17 @@ export function buildToolSystemPrompt(tools: ToolDefinition[]): string {
     return `## ${fn.name}${desc}${paramBlock}`;
   }).join('\n\n');
 
-  return `[Tool Call Format - Strictly Enforced]
+  return `[工具调用格式 - 必须严格遵守]
 <tool_call>
-{"name": "tool_name", "arguments": {"param": "value"}}
+{"name": "工具名", "arguments": {"参数": "值"}}
 </tool_call>
 
-Requirements:
-• Must wrap JSON with <tool_call> tags
-• JSON must include "name" and "arguments" fields
-• Do not output bash commands or markdown code blocks
-• Do not output system tags such as <toolcall_status>, <toolcall_result>
-• Use English only for all tags and labels
+要求：
+• 必须用 <tool_call> 标签包裹 JSON
+• JSON 必须有 "name" 和 "arguments" 字段
+• 禁止输出 bash 命令或 markdown 代码块
+• 禁止输出 <toolcall_status>、<toolcall_result> 等系统标签
+• 禁止使用中文标签（如 <函数调用>、<函数名> 等）
 
-Available Tools: ${toolDescs}`;
+可用工具：${toolDescs}`;
 }
