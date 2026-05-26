@@ -17,16 +17,17 @@ COPY src ./src
 RUN npm run build && \
     npm prune --omit=dev && \
     npm cache clean --force && \
-    rm -rf /app/node_modules/chart.js /app/node_modules/@kurkle/color && \
-    find /app/node_modules \( -name '*.map' -o -name '*.d.ts' -o -name 'README*' \
-      -o -name 'CHANGELOG*' -o -name 'LICENSE*' \) -delete
+    find /app/node_modules \( -name '*.map' -o -name '*.d.ts' -o -name '*.md' \
+      -o -name 'Makefile' -o -name '.npmignore' -o -name '*.yml' -o -name '*.yaml' \
+      -o -name '.github' -o -name 'test' -o -name 'tests' -o -name 'example' \
+      -o -name 'examples' -o -name 'doc' -o -name 'docs' -o -name '*.flow' \
+      -o -name '*.tsbuildinfo' \) -delete
 
 # ===== 运行阶段 =====
 FROM node:24-alpine
 
-# 安装运行时依赖并创建目录
-RUN apk add --no-cache dumb-init && \
-    mkdir -p /app/data /app/logs
+# 创建必要目录
+RUN mkdir -p /app/data /app/logs
 
 WORKDIR /app
 
@@ -40,6 +41,5 @@ ENV NODE_ENV=production
 
 EXPOSE 8080
 
-# 使用 dumb-init 处理信号
-ENTRYPOINT ["dumb-init", "--"]
-CMD ["npm", "start"]
+# 直接用 node 启动，避免 npm 额外进程开销
+CMD ["node", "dist/index.js"]
