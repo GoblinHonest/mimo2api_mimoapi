@@ -242,6 +242,7 @@ export function registerOpenAI(app: Hono) {
         return stream(c, async (s) => {
           let isAborted = false;
           let loggedError = false;
+          let seqNum = 0;
 
           const req = c.req.raw as any;
           if (req.on) {
@@ -251,7 +252,8 @@ export function registerOpenAI(app: Hono) {
           const sendEvent = async (event: string, data: object) => {
             if (isAborted) return;
             try {
-              await s.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+              const payload = { ...data, sequence_number: seqNum++ };
+              await s.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
             } catch (err) {
               isAborted = true;
               throw err;
@@ -260,24 +262,51 @@ export function registerOpenAI(app: Hono) {
 
           const msgId = `msg_${randomUUID().replace(/-/g, '')}`;
 
-          const buildResponse = (outputText: string, status: string) => ({
-            id: responseId, object: 'response', created_at: created, model: mimoModel,
-            output: outputText ? [{ type: 'message', id: msgId, role: 'assistant', content: [{ type: 'output_text', text: outputText }], status: 'completed' }] : [],
-            usage: lastUsage ? { input_tokens: lastUsage.promptTokens, output_tokens: lastUsage.completionTokens, total_tokens: lastUsage.totalTokens } : undefined,
+          const buildResponseObj = (outputText: string, status: string) => ({
+            id: responseId,
+            object: 'response',
+            created_at: created,
             status,
+            model: mimoModel,
+            output: outputText
+              ? [{
+                  type: 'message',
+                  id: msgId,
+                  role: 'assistant',
+                  content: [{ type: 'output_text', text: outputText }],
+                  status: 'completed',
+                }]
+              : [],
+            usage: lastUsage
+              ? { input_tokens: lastUsage.promptTokens, output_tokens: lastUsage.completionTokens, total_tokens: lastUsage.totalTokens }
+              : undefined,
           });
 
           try {
-            await sendEvent('response.created', buildResponse('', 'in_progress'));
+            // response.created — envelope: { type, response }
+            await sendEvent('response.created', {
+              type: 'response.created',
+              response: buildResponseObj('', 'in_progress'),
+            });
 
+            // response.in_progress
+            await sendEvent('response.in_progress', {
+              type: 'response.in_progress',
+              response: buildResponseObj('', 'in_progress'),
+            });
+
+            // response.output_item.added
             await sendEvent('response.output_item.added', {
               type: 'response.output_item.added',
+              response_id: responseId,
               output_index: 0,
               item: { type: 'message', id: msgId, role: 'assistant', content: [], status: 'in_progress' },
             });
 
+            // response.content_part.added
             await sendEvent('response.content_part.added', {
               type: 'response.content_part.added',
+              response_id: responseId,
               output_index: 0,
               content_index: 0,
               part: { type: 'output_text', text: '' },
@@ -293,6 +322,7 @@ export function registerOpenAI(app: Hono) {
               if (chunk.type === 'text') {
                 let text = (chunk.content ?? '').replace(/\u0000/g, '');
 
+                // Skip thinking blocks
                 if (!pastThink && !thinkingStarted && text && !text.includes('<think>')) pastThink = true;
                 if (!pastThink) {
                   if (!thinkingStarted && text.includes('<think>')) { thinkingStarted = true; text = text.replace('<think>', ''); }
@@ -317,6 +347,7 @@ export function registerOpenAI(app: Hono) {
                   outputText += text;
                   await sendEvent('response.output_text.delta', {
                     type: 'response.output_text.delta',
+                    response_id: responseId,
                     output_index: 0,
                     content_index: 0,
                     delta: text,
@@ -327,27 +358,41 @@ export function registerOpenAI(app: Hono) {
               } else if (chunk.type === 'finish') {
                 outputText = processThinkContent(outputText, config.thinkMode);
 
+                // output_text.done
                 await sendEvent('response.output_text.done', {
                   type: 'response.output_text.done',
+                  response_id: responseId,
                   output_index: 0,
                   content_index: 0,
                   text: outputText,
                 });
 
+                // content_part.done
                 await sendEvent('response.content_part.done', {
                   type: 'response.content_part.done',
+                  response_id: responseId,
                   output_index: 0,
                   content_index: 0,
                   part: { type: 'output_text', text: outputText },
                 });
 
+                // output_item.done
                 await sendEvent('response.output_item.done', {
                   type: 'response.output_item.done',
+                  response_id: responseId,
                   output_index: 0,
-                  item: { type: 'message', id: msgId, role: 'assistant', content: [{ type: 'output_text', text: outputText }], status: 'completed' },
+                  item: {
+                    type: 'message', id: msgId, role: 'assistant',
+                    content: [{ type: 'output_text', text: outputText }],
+                    status: 'completed',
+                  },
                 });
 
-                await sendEvent('response.completed', buildResponse(outputText, 'completed'));
+                // response.completed — envelope: { type, response }
+                await sendEvent('response.completed', {
+                  type: 'response.completed',
+                  response: buildResponseObj(outputText, 'completed'),
+                });
               }
             }
 
@@ -357,7 +402,9 @@ export function registerOpenAI(app: Hono) {
           } catch (err) {
             console.error('[RESPONSES] Streaming error:', err);
             if (!isAborted) {
-              try { await sendEvent('error', { type: 'error', message: String(err) }); } catch {}
+              try {
+                await sendEvent('error', { type: 'error', message: String(err) });
+              } catch {}
             }
             logRequest({ account_id: account.id, session_id: session.id, api_key_id: apiKeyRecord.id, model: mimoModel, usage: lastUsage, status: 'error', error: String(err), duration_ms: Date.now() - startTime, request_body: requestBody });
             loggedError = true;

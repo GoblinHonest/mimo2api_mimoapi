@@ -1,14 +1,15 @@
 export interface ToolDefinition {
-  // OpenAI format
+  // OpenAI Chat Completions format
   type?: 'function';
   function?: {
     name: string;
     description?: string;
     parameters?: Record<string, unknown>;
   };
-  // Anthropic format
+  // Anthropic format / OpenAI Responses API format (name, description, parameters at top level)
   name?: string;
   description?: string;
+  parameters?: Record<string, unknown>;
   input_schema?: Record<string, unknown>;
 }
 
@@ -20,7 +21,7 @@ interface NormalizedTool {
 
 function normalizeTool(t: ToolDefinition): NormalizedTool {
   if (t.function) return { name: t.function.name, description: t.function.description, parameters: t.function.parameters };
-  return { name: t.name!, description: t.description, parameters: t.input_schema };
+  return { name: t.name!, description: t.description, parameters: t.parameters ?? t.input_schema };
 }
 
 // 递归生成参数 schema 描述，保留嵌套结构
