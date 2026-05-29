@@ -31,7 +31,8 @@ export function loadConfig() {
   }
 
   if (map.has('adminKey')) config.adminKey = map.get('adminKey')!;
-  if (map.has('mimoProxy')) config.mimoProxy = map.get('mimoProxy')!.trim();
+  const mimoProxyVal = map.get('mimoProxy');
+  if (mimoProxyVal != null) config.mimoProxy = mimoProxyVal.trim();
   if (map.has('thinkMode') && ['passthrough', 'strip', 'separate'].includes(map.get('thinkMode')!)) {
     config.thinkMode = map.get('thinkMode') as typeof config.thinkMode;
   }
