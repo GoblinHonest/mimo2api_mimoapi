@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
+import { encoding_for_model } from 'tiktoken';
 import { decrementActive } from '../accounts.js';
 import { callMimo, MimoUsage, fetchBotConfig } from '../mimo/client.js';
 import { serializeMessages, ChatMessage } from '../mimo/serialize.js';
@@ -475,6 +476,43 @@ export function registerAnthropic(app: Hono) {
       return c.json({ type: 'error', error: { type: 'api_error', message: msg } }, 502);
     } finally {
       if (!isStream) decrementActive(account.id);
+    }
+  });
+
+  // Token 计数端点
+  app.post('/v1/messages/count_tokens', async (c) => {
+    console.log('\n[REQ] ========== Count Tokens Request ==========');
+
+    const apiKey = extractApiKey(c);
+
+    // 认证检查
+    const apiKeyRecord = authenticateRequest(apiKey);
+    if (!apiKeyRecord) {
+      return c.json({ type: 'error', error: { type: 'authentication_error', message: apiKey ? 'Invalid API key' : 'Missing API key' } }, 401);
+    }
+
+    try {
+      const body = await c.req.json();
+      console.log('[REQ] Count tokens for model:', body.model || 'default');
+
+      // 复用现有的 buildMessages 解析消息
+      const messages = buildMessages(body);
+      // 序列化为内部格式
+      const query = serializeMessages(messages);
+
+      // 使用 tiktoken 计算 token 数量
+      const enc = encoding_for_model('gpt-4');
+      const tokens = enc.encode(query);
+      const inputTokens = tokens.length;
+      enc.free(); // 释放 WASM 内存
+
+      console.log('[REQ] Token count result:', { inputTokens, queryLength: query.length });
+
+      return c.json({ input_tokens: inputTokens });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[REQ] Count tokens error:', msg);
+      return c.json({ type: 'error', error: { type: 'api_error', message: msg } }, 500);
     }
   });
 }
