@@ -13,6 +13,15 @@ const CONFIG = {
   ENABLE_LOGGING: process.env.NODE_ENV !== 'production',
 };
 
+// 常见的 HTML/Markdown 标签（用于排除）
+const EXCLUDED_TAGS = [
+  'div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li',
+  'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u',
+  'thinking', 'result', 'task_progress', 'path', 'name', 'content',
+  'question', 'options', 'todo', 'todo_list'
+];
+
 // 日志工具
 function log(level: 'info' | 'warn' | 'error', message: string, data?: unknown) {
   if (!CONFIG.ENABLE_LOGGING) return;
@@ -642,8 +651,6 @@ function parseDirectToolNameFormat(text: string): ParsedToolCall[] {
   let match: RegExpExecArray | null;
   let count = 0;
 
-  const excludedTags = ['div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u', 'todo', 'todo_list', 'thinking', 'result', 'task_progress', 'path', 'name', 'content', 'question', 'options'];
-
   while ((match = directToolRe.exec(cleanText)) !== null) {
     if (++count > CONFIG.MAX_TOOL_CALLS) {
       log('warn', `Exceeded max tool calls limit: ${CONFIG.MAX_TOOL_CALLS}`);
@@ -654,7 +661,7 @@ function parseDirectToolNameFormat(text: string): ParsedToolCall[] {
     const inner = match[2].trim();
 
     // 跳过常见的 HTML/Markdown 标签和非工具标签
-    if (excludedTags.includes(toolName.toLowerCase())) {
+    if (EXCLUDED_TAGS.includes(toolName.toLowerCase())) {
       continue;
     }
 
@@ -862,8 +869,7 @@ export function findEarliestToolCallMarker(text: string): number {
   const directMatch = cleanText.match(directToolPattern);
   if (directMatch) {
     const tagName = directMatch[1].toLowerCase();
-    const excludedTags = ['div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u', 'thinking', 'result', 'task_progress', 'path', 'name', 'content', 'question', 'options'];
-    if (!excludedTags.includes(tagName)) {
+    if (!EXCLUDED_TAGS.includes(tagName)) {
       checks.push(cleanText.indexOf(directMatch[0]));
     }
   }
@@ -931,8 +937,7 @@ export function hasToolCallMarker(text: string): boolean {
   if (match) {
     const tagName = match[1].toLowerCase();
     // 排除常见的 HTML/Markdown 标签
-    const excludedTags = ['div', 'span', 'p', 'a', 'img', 'br', 'hr', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'strong', 'em', 'b', 'i', 'u', 'thinking', 'result', 'task_progress', 'path', 'name', 'content', 'question', 'options'];
-    if (!excludedTags.includes(tagName)) {
+    if (!EXCLUDED_TAGS.includes(tagName)) {
       return true;
     }
   }

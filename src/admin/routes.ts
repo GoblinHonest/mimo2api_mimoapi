@@ -15,30 +15,7 @@ import { callMimo } from '../mimo/client.js';
 import { randomUUID } from 'crypto';
 import { readdirSync, existsSync } from 'fs';
 import path from 'path';
-
-function getAllLogs(): RequestLogRecord[] {
-  if (!existsSync(LOGS_PATH)) return [];
-  const files = readdirSync(LOGS_PATH).filter((f: string) => f.endsWith('.json')).sort();
-  const allLogs: RequestLogRecord[] = [];
-  for (const file of files) {
-    const date = file.replace('.json', '');
-    allLogs.push(...loadLogs(date));
-  }
-  return allLogs;
-}
-
-function getLogsByDateRange(startDate: string, endDate: string): RequestLogRecord[] {
-  if (!existsSync(LOGS_PATH)) return [];
-  const files = readdirSync(LOGS_PATH).filter((f: string) => f.endsWith('.json')).sort();
-  const allLogs: RequestLogRecord[] = [];
-  for (const file of files) {
-    const date = file.replace('.json', '');
-    if (date >= startDate && date <= endDate) {
-      allLogs.push(...loadLogs(date));
-    }
-  }
-  return allLogs;
-}
+import { getAllLogs, getLogsByDateRange, getLogsByAccountId, getLogsByApiKeyId, calculateLogStats } from '../shared/log-utils.js';
 
 async function adminAuth(c: Parameters<Parameters<Hono['use']>[1]>[0], next: () => Promise<void>): Promise<void | Response> {
   const key = c.req.header('X-Admin-Key') ?? c.req.query('admin_key');
@@ -70,11 +47,12 @@ export function registerAdmin(app: Hono) {
 
     const accounts = allAccounts.slice(offset, offset + limit).map(a => {
       const logs = logsByAccount.get(a.id) || [];
+      const stats = calculateLogStats(logs);
       return {
         ...a,
-        total_requests: logs.length,
-        total_prompt_tokens: logs.reduce((sum, l) => sum + (l.prompt_tokens || 0), 0),
-        total_completion_tokens: logs.reduce((sum, l) => sum + (l.completion_tokens || 0), 0),
+        total_requests: stats.total_requests,
+        total_prompt_tokens: stats.total_prompt_tokens,
+        total_completion_tokens: stats.total_completion_tokens,
       };
     });
 
@@ -195,26 +173,26 @@ export function registerAdmin(app: Hono) {
 
     const accounts = allAccounts.slice(offset, offset + limit).map(a => {
       const logs = logsByAccount.get(a.id) || [];
+      const stats = calculateLogStats(logs);
       return {
         id: a.id,
         alias: a.alias,
         api_key: a.api_key,
         is_active: a.is_active,
         active_requests: a.active_requests,
-        total_prompt_tokens: logs.reduce((sum, l) => sum + (l.prompt_tokens || 0), 0),
-        total_completion_tokens: logs.reduce((sum, l) => sum + (l.completion_tokens || 0), 0),
-        total_requests: logs.length,
+        total_prompt_tokens: stats.total_prompt_tokens,
+        total_completion_tokens: stats.total_completion_tokens,
+        total_requests: stats.total_requests,
       };
     });
 
-    const totalPromptTokens = allLogs.reduce((sum, l) => sum + (l.prompt_tokens || 0), 0);
-    const totalCompletionTokens = allLogs.reduce((sum, l) => sum + (l.completion_tokens || 0), 0);
+    const overallStats = calculateLogStats(allLogs);
 
     return c.json({
       accounts, maxConcurrent: config.maxConcurrentPerAccount,
       totalAccounts, page, limit,
-      totalPromptTokens,
-      totalCompletionTokens,
+      totalPromptTokens: overallStats.total_prompt_tokens,
+      totalCompletionTokens: overallStats.total_completion_tokens,
     });
   });
 
@@ -238,11 +216,12 @@ export function registerAdmin(app: Hono) {
 
     const apiKeys = allApiKeys.slice(offset, offset + limit).map(k => {
       const logs = logsByKey.get(k.id) || [];
+      const stats = calculateLogStats(logs);
       return {
         ...k,
-        total_requests: logs.length,
-        total_prompt_tokens: logs.reduce((sum, l) => sum + (l.prompt_tokens || 0), 0),
-        total_completion_tokens: logs.reduce((sum, l) => sum + (l.completion_tokens || 0), 0),
+        total_requests: stats.total_requests,
+        total_prompt_tokens: stats.total_prompt_tokens,
+        total_completion_tokens: stats.total_completion_tokens,
       };
     });
 
@@ -405,14 +384,8 @@ export function registerAdmin(app: Hono) {
     const apiKey = getApiKeyById(id);
     if (!apiKey) return c.json({ error: 'Not found' }, 404);
 
-    const allLogs = getAllLogs();
-    const keyLogs = allLogs.filter(l => l.api_key_id === id);
-
-    const stats = {
-      total_requests: keyLogs.length,
-      total_prompt_tokens: keyLogs.reduce((sum, l) => sum + (l.prompt_tokens || 0), 0),
-      total_completion_tokens: keyLogs.reduce((sum, l) => sum + (l.completion_tokens || 0), 0),
-    };
+    const keyLogs = getLogsByApiKeyId(id);
+    const stats = calculateLogStats(keyLogs);
 
     return c.json({ ...apiKey, stats });
   });
