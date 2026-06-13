@@ -4,15 +4,6 @@ import { fetchBotConfig } from '../mimo/client.js';
 export const MODEL_MAP: Record<string, string> = {
   'mimo-v2.5-pro': 'mimo-v2.5-pro',
   'mimo-v2.5': 'mimo-v2.5',
-  'mimo-v2.1-pro': 'mimo-v2.1-pro',
-  'mimo-v2.1-omni': 'mimo-v2.1-omni',
-  'mimo-v2.1-pro-preview': 'mimo-v2.1-pro-preview',
-  'mimo-v2.1-omni-preview': 'mimo-v2.1-omni-preview',
-  'mimo-v2-pro': 'mimo-v2-pro',
-  'mimo-v2-omni': 'mimo-v2-omni',
-  'mimo-v2-flash-studio': 'mimo-v2-flash-studio',
-  'clawm-alpha': 'clawm-alpha',
-  'clawl-alpha': 'clawl-alpha',
 };
 
 // 缓存模型配置
@@ -25,7 +16,7 @@ function resolveModelDynamic(model: string): string {
   if (entry) {
     return entry.redirectTo ?? entry.model;
   }
-  return 'mimo-v2-pro'; // 未知模型默认
+  return 'mimo-v2.5'; // 未知模型默认
 }
 
 export async function getResolvedModel(model: string): Promise<string> {
