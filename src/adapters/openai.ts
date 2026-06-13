@@ -47,7 +47,7 @@ async function getResolvedModel(model: string): Promise<string> {
     try {
       const botConfig = await fetchBotConfig();
       cachedModels = botConfig.modelConfigListNg
-        .filter(m => m.pageType === 'chat')
+        .filter(m => m.pageType === 'chat' && m.isNew === true)
         .map(m => ({ model: m.model, redirectTo: m.redirectTo }));
     } catch (err) {
       console.error('[MODEL] Failed to fetch bot config:', err);
@@ -157,7 +157,7 @@ export function registerOpenAI(app: Hono) {
     try {
       const botConfig = await fetchBotConfig();
       const chatModels = botConfig.modelConfigListNg
-        .filter(m => m.pageType === 'chat')
+        .filter(m => m.pageType === 'chat' && m.isNew === true)
         .map(m => ({ id: m.model, object: 'model', created: 1700000000, owned_by: 'mimo' }));
       return c.json({ object: 'list', data: chatModels });
     } catch (err) {

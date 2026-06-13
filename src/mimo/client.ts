@@ -25,6 +25,8 @@ export interface BotConfig {
     pageType: string;
     redirectTo?: string;
     isNew?: boolean;
+    isDefault?: boolean;
+    isOmni?: boolean;
   }>;
 }
 
@@ -67,7 +69,7 @@ export async function fetchBotConfig(): Promise<BotConfig> {
 export function getChatModels(): string[] {
   if (!cachedBotConfig) return [];
   return cachedBotConfig.modelConfigListNg
-    .filter(m => m.pageType === 'chat')
+    .filter(m => m.pageType === 'chat' && m.isNew === true)
     .map(m => m.model);
 }
 
