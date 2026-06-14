@@ -19,8 +19,7 @@
   "type": "module",
   "dependencies": {
     "@hono/node-server": "^2.0.3",
-    "hono": "^4.12.9",
-    "tiktoken": "^1.0.22"
+    "hono": "^4.12.9"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.2.2",

@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
-import { encoding_for_model } from 'tiktoken';
 import { decrementActive } from '../accounts.js';
 import { callMimo, MimoUsage, fetchBotConfig } from '../mimo/client.js';
 import { serializeMessages, ChatMessage } from '../mimo/serialize.js';
@@ -455,11 +454,11 @@ export function registerAnthropic(app: Hono) {
       // 序列化为内部格式
       const query = serializeMessages(messages);
 
-      // 使用 tiktoken 计算 token 数量
-      const enc = encoding_for_model('gpt-4');
-      const tokens = enc.encode(query);
-      const inputTokens = tokens.length;
-      enc.free(); // 释放 WASM 内存
+      // 基于字符/词数估算 token 数量
+      const chineseChars = (query.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g) || []).length;
+      const remaining = query.replace(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g, '');
+      const words = remaining.split(/\s+/).filter(w => w.length > 0).length;
+      const inputTokens = chineseChars * 2 + Math.ceil(words * 1.3);
 
       console.log('[REQ] Token count result:', { inputTokens, queryLength: query.length });
 
