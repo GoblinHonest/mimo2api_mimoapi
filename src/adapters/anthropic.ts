@@ -219,7 +219,7 @@ export function registerAnthropic(app: Hono) {
             let pendingText = '';
             pingTimer = setInterval(async () => {
               if (!isAborted) {
-                try { await s.write('event: ping\ndata: {}\n\n'); }
+                try { await s.write('event: ping\ndata: {"type":"ping"}\n\n'); }
                 catch (err) { console.error('[STREAM] Ping error:', err); isAborted = true; if (pingTimer) clearInterval(pingTimer); }
               }
             }, 5000);
